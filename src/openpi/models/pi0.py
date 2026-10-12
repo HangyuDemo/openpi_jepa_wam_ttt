@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 
 import einops
@@ -364,6 +365,7 @@ class Pi0(_model.BaseModel):
                 lambda x: None if x is None else jnp.swapaxes(x, 0, 1), observation
             )
             actions_time = jnp.swapaxes(actions, 0, 1)
+<<<<<<< HEAD
             keys = jax.random.split(rng, time_steps)
 
             def step(carry, inputs):
@@ -379,6 +381,84 @@ class Pi0(_model.BaseModel):
             _, values = jax.lax.scan(step, state, (obs_time, actions_time, keys, jnp.arange(time_steps)))
             flow = jnp.swapaxes(values[0], 0, 1)
             aux = jnp.swapaxes(values[1], 0, 1) if self.use_vjepa_aux else None
+=======
+            # True TBPTT: build independent segments and stop gradients through
+            # the fast-weight carry between segments. Merely applying
+            # stop_gradient inside one long scan still lets reverse-mode AD
+            # retain residuals for the entire context. Checkpointing each
+            # segment makes those residuals local to `segment_size` timesteps.
+            segment_size = min(self.ttt_tbptt_step_size, time_steps)
+            num_segments = (time_steps + segment_size - 1) // segment_size
+            padded_steps = num_segments * segment_size
+            pad_steps = padded_steps - time_steps
+
+            def pad_time(x):
+                if x is None or pad_steps == 0:
+                    return x
+                padding = ((0, pad_steps),) + ((0, 0),) * (x.ndim - 1)
+                return jnp.pad(x, padding, mode="edge")
+
+            obs_time = jax.tree.map(pad_time, obs_time)
+            if obs_time.time_valid_mask is not None and pad_steps:
+                obs_time = dataclasses.replace(
+                    obs_time,
+                    time_valid_mask=obs_time.time_valid_mask.at[time_steps:].set(False),
+                )
+            actions_time = pad_time(actions_time)
+            keys = jax.random.split(rng, padded_steps)
+
+            def segment_time(x):
+                if x is None:
+                    return None
+                return x.reshape((num_segments, segment_size, *x.shape[1:]))
+
+            obs_segments = jax.tree.map(segment_time, obs_time)
+            action_segments = segment_time(actions_time)
+            key_segments = segment_time(keys)
+
+            def frame_step(carry, inputs):
+                frame, action, frame_rng = inputs
+                flow, aux, next_state = self._ttt_loss_frame(frame_rng, frame, action, carry, train=train)
+                return next_state, (flow, aux) if aux is not None else (flow,)
+
+            # Rematerialize one temporal frame at a time during the backward
+            # pass. A checkpoint around the whole segment only prevents
+            # residuals from escaping the segment; differentiating its inner
+            # scan can still materialize all `segment_size` frames together.
+            # Per-frame rematerialization preserves the full gradient path
+            # within each TBPTT segment while keeping large Pi0/TTT
+            # activations local to one frame.
+            checkpointed_frame_step = jax.checkpoint(
+                frame_step,
+                prevent_cse=False,
+                policy=jax.checkpoint_policies.nothing_saveable,
+            )
+
+            def segment_step(carry, inputs):
+                # Carry the fast weights forward as values, but truncate their
+                # gradient history at every segment boundary.
+                carry = jax.tree.map(jax.lax.stop_gradient, carry)
+                return jax.lax.scan(checkpointed_frame_step, carry, inputs)
+
+            checkpointed_segment_step = jax.checkpoint(
+                segment_step,
+                prevent_cse=False,
+                policy=jax.checkpoint_policies.nothing_saveable,
+            )
+            _, values = jax.lax.scan(
+                checkpointed_segment_step,
+                state,
+                (obs_segments, action_segments, key_segments),
+            )
+
+            flow_time = values[0].reshape((padded_steps, *values[0].shape[2:]))[:time_steps]
+            flow = jnp.swapaxes(flow_time, 0, 1)
+            if self.use_vjepa_aux:
+                aux_time = values[1].reshape((padded_steps, *values[1].shape[2:]))[:time_steps]
+                aux = jnp.swapaxes(aux_time, 0, 1)
+            else:
+                aux = None
+>>>>>>> 1152696 (little changes)
             return flow, aux
         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
         observation = _model.preprocess_observation(

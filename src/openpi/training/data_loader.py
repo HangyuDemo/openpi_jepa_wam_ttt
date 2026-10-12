@@ -615,9 +615,6 @@ class TorchDataLoader:
                 execute in the main process.
             seed: The seed to use for shuffling the data.
         """
-        if jax.process_count() > 1:
-            raise NotImplementedError("Data loading with multiple processes is not supported.")
-
         if len(dataset) < local_batch_size:
             raise ValueError(f"Local batch size ({local_batch_size}) is larger than the dataset size ({len(dataset)}).")
 
@@ -636,7 +633,9 @@ class TorchDataLoader:
             mp_context = multiprocessing.get_context("spawn")
 
         generator = torch.Generator()
-        generator.manual_seed(seed)
+        # Each JAX process owns a disjoint local batch stream. The resulting
+        # global batch is assembled by make_array_from_process_local_data.
+        generator.manual_seed(seed + 1_000_003 * jax.process_index())
         self._data_loader = torch.utils.data.DataLoader(
             typing.cast(torch.utils.data.Dataset, dataset),
             batch_size=local_batch_size,

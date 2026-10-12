@@ -19,6 +19,9 @@ class _FakePolicy:
         self.calls.append((observation, seed))
         return {"actions": [seed]}
 
+    def reset(self):
+        self.calls.append("reset")
+
 
 def _serve_fake_policy(port):
     websocket_policy_server.WebsocketPolicyServer(_FakePolicy(), host="127.0.0.1", port=port).serve_forever()
@@ -73,6 +76,9 @@ def test_live_websocket_seeded_inference_round_trip():
         response = client.infer({"state": [0.0]}, seed=123)
         assert response["actions"] == [123]
         assert "server_timing" in response
+        assert websocket_inference_protocol.supports_reset(client.get_server_metadata())
+        client.reset()
+        assert client.infer({"state": [0.0]}, seed=456)["actions"] == [456]
         client._ws.close()
     finally:
         process.terminate()

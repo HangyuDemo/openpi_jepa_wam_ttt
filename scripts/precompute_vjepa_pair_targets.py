@@ -174,7 +174,18 @@ def ensure_contract(output_root: Path, contract: dict[str, Any]) -> None:
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except FileExistsError:
-        existing = read_json(path)
+        # Multiple Slurm workers start together. The worker that won O_EXCL
+        # writes the manifest in place, so briefly wait for its JSON to become
+        # complete before validating the shared contract.
+        existing = None
+        for _ in range(200):
+            try:
+                existing = read_json(path)
+                break
+            except json.JSONDecodeError:
+                time.sleep(0.05)
+        if existing is None:
+            raise RuntimeError(f"Timed out waiting for the shared manifest: {path}")
         if existing != contract:
             # Format 1 contained only future-pair targets. Preserve those files
             # and upgrade the manifest so interrupted/older preprocessing can

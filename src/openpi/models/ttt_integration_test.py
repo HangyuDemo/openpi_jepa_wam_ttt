@@ -3,6 +3,10 @@
 import dataclasses
 import unittest
 
+<<<<<<< HEAD
+=======
+import flax.nnx as nnx
+>>>>>>> 1152696 (little changes)
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +36,11 @@ class TTTIntegrationTest(unittest.TestCase):
         _, state_b = explicit.apply(variables, query, full_b, memory, state, update=True)
         np.testing.assert_allclose(state_a.w1, state_b.w1)
 
+<<<<<<< HEAD
     def _config(self, source="explicit_jepa", context=1):
+=======
+    def _config(self, source="explicit_jepa", context=1, tbptt=8):
+>>>>>>> 1152696 (little changes)
         return pi0_config.Pi0Config(
             pi05=True, paligemma_variant="dummy", action_expert_variant="dummy",
             action_horizon=2, use_vjepa_aux=True, vjepa_num_queries=4,
@@ -40,6 +48,10 @@ class TTTIntegrationTest(unittest.TestCase):
             vjepa_target_dim=16, ttt_enabled=True, ttt_architecture="wrapper",
             ttt_memory_source=source, ttt_num_register_tokens=2,
             ttt_num_future_tokens=1, ttt_context_length=context,
+<<<<<<< HEAD
+=======
+            ttt_tbptt_step_size=tbptt,
+>>>>>>> 1152696 (little changes)
         )
 
     def test_explicit_kv_comes_from_current_jepa_not_future_prediction(self):
@@ -78,6 +90,46 @@ class TTTIntegrationTest(unittest.TestCase):
         self.assertEqual(fast.step.shape, (1, 1))
         np.testing.assert_array_equal(np.asarray(fast.step[:, 0]), [1])
 
+<<<<<<< HEAD
+=======
+    def test_temporal_context_with_partial_final_tbptt_segment(self):
+        config = self._config("implicit_full", context=3, tbptt=2)
+        model = config.create(jax.random.key(10))
+        observation, actions = config.fake_obs(1), config.fake_act(1)
+        temporal_obs = jax.tree.map(
+            lambda x: None if x is None else jnp.stack((x, x, x), axis=1), observation
+        )
+        temporal_obs = dataclasses.replace(
+            temporal_obs, time_valid_mask=jnp.array([[True, True, True]])
+        )
+        temporal_actions = jnp.stack((actions, actions, actions), axis=1)
+        flow, aux = model.compute_loss_components(jax.random.key(11), temporal_obs, temporal_actions)
+        self.assertEqual(flow.shape, (1, 3, 2))
+        self.assertEqual(aux.shape, (1, 3))
+
+    def test_segmented_tbptt_supports_outer_gradient(self):
+        config = self._config("explicit_jepa", context=3, tbptt=2)
+        model = config.create(jax.random.key(12))
+        observation, actions = config.fake_obs(1), config.fake_act(1)
+        temporal_obs = jax.tree.map(
+            lambda x: None if x is None else jnp.stack((x, x, x), axis=1), observation
+        )
+        temporal_obs = dataclasses.replace(
+            temporal_obs, time_valid_mask=jnp.array([[True, True, True]])
+        )
+        temporal_actions = jnp.stack((actions, actions, actions), axis=1)
+
+        def loss_fn(model):
+            flow, aux = model.compute_loss_components(
+                jax.random.key(13), temporal_obs, temporal_actions, train=True
+            )
+            return jnp.mean(flow) + jnp.mean(aux)
+
+        loss, grads = nnx.value_and_grad(loss_fn)(model)
+        self.assertTrue(np.isfinite(np.asarray(loss)))
+        self.assertTrue(all(np.all(np.isfinite(np.asarray(leaf))) for leaf in jax.tree.leaves(grads)))
+
+>>>>>>> 1152696 (little changes)
     def test_episode_window_does_not_cross_boundary(self):
         class Frames:
             def __len__(self):

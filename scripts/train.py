@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import logging
+import os
 import platform
 from typing import Any
 
@@ -55,8 +56,9 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, log_code: bool = 
     ckpt_dir = config.checkpoint_dir
     if not ckpt_dir.exists():
         raise FileNotFoundError(f"Checkpoint directory {ckpt_dir} does not exist.")
-    if resuming:
-        run_id = (ckpt_dir / "wandb_id.txt").read_text().strip()
+    run_id_file = ckpt_dir / "wandb_id.txt"
+    if resuming and run_id_file.exists():
+        run_id = run_id_file.read_text().strip()
         wandb.init(id=run_id, resume="must", project=config.project_name)
     else:
         wandb.init(
@@ -64,10 +66,36 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, log_code: bool = 
             config=dataclasses.asdict(config),
             project=config.project_name,
         )
-        (ckpt_dir / "wandb_id.txt").write_text(wandb.run.id)
+        run_id_file.write_text(wandb.run.id)
 
     if log_code:
         wandb.run.log_code(epath.Path(__file__).parent.parent)
+
+
+def initialize_jax_distributed() -> None:
+    """Initialize JAX multi-host mode when launched by the Slurm wrapper."""
+    process_count = int(os.environ.get("SLURM_NTASKS", "1"))
+    # Querying jax.process_count() initializes the XLA backend, which makes a
+    # subsequent jax.distributed.initialize() fail. This state-only check does
+    # not touch XLA and is therefore safe before distributed initialization.
+    if process_count <= 1 or jax.distributed.is_initialized():
+        return
+
+    coordinator_address = os.environ.get("JAX_COORDINATOR_ADDRESS")
+    if not coordinator_address:
+        raise RuntimeError("JAX_COORDINATOR_ADDRESS is required for a multi-host Slurm launch")
+    process_id = int(os.environ.get("SLURM_PROCID", "0"))
+    jax.distributed.initialize(
+        coordinator_address=coordinator_address,
+        num_processes=process_count,
+        process_id=process_id,
+    )
+    logging.info(
+        "Initialized JAX distributed runtime: process %d/%d, local devices=%d",
+        jax.process_index(),
+        jax.process_count(),
+        jax.local_device_count(),
+    )
 
 
 def _load_weights_and_validate(loader: _weight_loaders.WeightLoader, params_shape: at.Params) -> at.Params:
@@ -115,6 +143,28 @@ def init_train_state(
 
     train_state_shape = jax.eval_shape(init, init_rng)
     state_sharding = sharding.fsdp_sharding(train_state_shape, mesh, log=True)
+
+    trainable_shapes = traverse_util.flatten_dict(
+        train_state_shape.params.filter(config.trainable_filter).to_pure_dict()
+    )
+    trainable_paths = ["/".join(map(str, path)) for path in trainable_shapes]
+    if config.name.endswith("_ttt_only"):
+        def is_ttt_parameter(path: str) -> bool:
+            parts = tuple(path.split("/"))
+            return "ttt" in parts or any(part.startswith("ttt_") for part in parts)
+
+        unexpected = [path for path in trainable_paths if not is_ttt_parameter(path)]
+        if unexpected:
+            raise ValueError(f"TTT-only config exposed non-TTT trainable parameters: {unexpected}")
+        if not trainable_paths:
+            raise ValueError("TTT-only config did not expose any trainable parameters")
+    trainable_count = sum(int(np.prod(value.shape)) for value in trainable_shapes.values())
+    logging.info(
+        "Trainable parameters: %d values across %d leaves%s",
+        trainable_count,
+        len(trainable_paths),
+        " (strict TTT-only validation passed)" if config.name.endswith("_ttt_only") else "",
+    )
 
     if resume:
         return train_state_shape, state_sharding
@@ -233,6 +283,7 @@ def train_step(
 
 def main(config: _config.TrainConfig):
     init_logging()
+    initialize_jax_distributed()
     logging.info(f"Running on: {platform.node()}")
 
     if config.batch_size % jax.device_count() != 0:
@@ -255,7 +306,11 @@ def main(config: _config.TrainConfig):
         overwrite=config.overwrite,
         resume=config.resume,
     )
-    init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
+    init_wandb(
+        config,
+        resuming=resuming,
+        enabled=config.wandb_enabled and jax.process_index() == 0,
+    )
 
     data_loader = _data_loader.create_data_loader(
         config,
@@ -265,13 +320,6 @@ def main(config: _config.TrainConfig):
     data_iter = iter(data_loader)
     batch = next(data_iter)
     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
-
-    # Log images from first batch to sanity check.
-    images_to_log = [
-        wandb.Image(np.concatenate([np.array(img[i]) for img in batch[0].images.values()], axis=1))
-        for i in range(min(5, len(next(iter(batch[0].images.values())))))
-    ]
-    wandb.log({"camera_views": images_to_log}, step=0)
 
     train_state, train_state_sharding = init_train_state(config, init_rng, mesh, resume=resuming)
     jax.block_until_ready(train_state)
@@ -305,7 +353,8 @@ def main(config: _config.TrainConfig):
             reduced_info = jax.device_get(jax.tree.map(jnp.mean, stacked_infos))
             info_str = ", ".join(f"{k}={v:.4f}" for k, v in reduced_info.items())
             pbar.write(f"Step {step}: {info_str}")
-            wandb.log(reduced_info, step=step)
+            if config.wandb_enabled and jax.process_index() == 0:
+                wandb.log(reduced_info, step=step)
             infos = []
         batch = next(data_iter)
 

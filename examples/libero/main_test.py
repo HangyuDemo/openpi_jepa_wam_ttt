@@ -81,7 +81,7 @@ def _run_header(
         "policy_seed_scheme_version": libero_eval._POLICY_SEED_SCHEME_VERSION,
         "seed": 7,
         "resize_size": 224,
-        "replan_steps": 5,
+        "replan_steps": 8,
         "num_steps_wait": 10,
         "num_trials_per_task": trials,
         "environment_resolution": 256,

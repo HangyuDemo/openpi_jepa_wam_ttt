@@ -4,7 +4,9 @@ from typing import Any, Dict, Optional, Tuple
 SERVER_CAPABILITIES_KEY = "__openpi_server_capabilities__"
 SEEDED_INFERENCE_CAPABILITY = "seeded_inference"
 SEEDED_INFERENCE_VERSION = 1
+RESET_CAPABILITY = "reset"
 SEEDED_INFERENCE_REQUEST_KEY = "__openpi_seeded_inference_request__"
+RESET_REQUEST_KEY = "__openpi_reset_request__"
 _UINT32_MAX = 2**32 - 1
 
 
@@ -13,6 +15,7 @@ def with_server_capabilities(metadata: Dict[str, Any]) -> Dict[str, Any]:
     raw_capabilities = result.get(SERVER_CAPABILITIES_KEY)
     capabilities = dict(raw_capabilities) if isinstance(raw_capabilities, dict) else {}
     capabilities[SEEDED_INFERENCE_CAPABILITY] = SEEDED_INFERENCE_VERSION
+    capabilities[RESET_CAPABILITY] = 1
     result[SERVER_CAPABILITIES_KEY] = capabilities
     return result
 
@@ -20,6 +23,11 @@ def with_server_capabilities(metadata: Dict[str, Any]) -> Dict[str, Any]:
 def supports_seeded_inference(metadata: Dict[str, Any]) -> bool:
     capabilities = metadata.get(SERVER_CAPABILITIES_KEY)
     return isinstance(capabilities, dict) and capabilities.get(SEEDED_INFERENCE_CAPABILITY) == SEEDED_INFERENCE_VERSION
+
+
+def supports_reset(metadata: Dict[str, Any]) -> bool:
+    capabilities = metadata.get(SERVER_CAPABILITIES_KEY)
+    return isinstance(capabilities, dict) and capabilities.get(RESET_CAPABILITY) == 1
 
 
 def make_inference_request(observation: Dict[str, Any], seed: Optional[int]) -> Dict[str, Any]:
@@ -33,6 +41,14 @@ def make_inference_request(observation: Dict[str, Any], seed: Optional[int]) -> 
             "observation": observation,
         }
     }
+
+
+def make_reset_request() -> Dict[str, Any]:
+    return {RESET_REQUEST_KEY: 1}
+
+
+def is_reset_request(request: Dict[str, Any]) -> bool:
+    return request == make_reset_request()
 
 
 def parse_inference_request(request: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[int]]:

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class WebsocketPolicyServer:
     """Serves a policy using the websocket protocol. See websocket_client_policy.py for a client implementation.
 
-    Currently only implements the `load` and `infer` methods.
+    Handles inference and per-episode reset requests.
     """
 
     def __init__(
@@ -59,7 +59,11 @@ class WebsocketPolicyServer:
                 request = msgpack_numpy.unpackb(await websocket.recv())
 
                 infer_time = time.monotonic()
-                action = _infer_request(self._policy, request)
+                if websocket_inference_protocol.is_reset_request(request):
+                    self._policy.reset()
+                    action = {"reset": True}
+                else:
+                    action = _infer_request(self._policy, request)
                 infer_time = time.monotonic() - infer_time
 
                 action["server_timing"] = {

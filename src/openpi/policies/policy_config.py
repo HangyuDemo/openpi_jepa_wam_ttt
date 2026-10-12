@@ -88,7 +88,16 @@ def create_trained_policy(
             *repack_transforms.outputs,
         ],
         sample_kwargs=sample_kwargs,
-        metadata=train_config.policy_metadata,
+        metadata={
+            **(train_config.policy_metadata or {}),
+            "action_horizon": train_config.model.action_horizon,
+            "ttt_observation_stride": (
+                train_config.model.ttt_observation_stride if getattr(train_config.model, "ttt_enabled", False) else None
+            ),
+            "ttt_memory_source": (
+                train_config.model.ttt_memory_source if getattr(train_config.model, "ttt_enabled", False) else None
+            ),
+        },
         is_pytorch=is_pytorch,
         pytorch_device=pytorch_device if is_pytorch else None,
     )

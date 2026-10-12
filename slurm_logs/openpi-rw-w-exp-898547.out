@@ -1,0 +1,41 @@
+job=898547 nodes=evc[37,49] coordinator=evc37:12547
+config=pi05_robotwin2_clean20_ttt_wrapper_explicit_jepa_ttt_only exp=robotwin_clean20_ttt_wrapper_explicit_gbs16 gbs=16 fsdp=4 steps=30000
+context=128 stride=8 tbptt=8
+data=/lustre/fs1/home/ha865618/project/robotwin_lerobot/robotwin2_clean20_v21 targets=/lustre/fs1/home/ha865618/project/openpi_jepawam/data/vjepa_targets/robotwin2_clean20_v21_vjepa2_1_vitg_384_offset50
+checkpoint=/lustre/fs1/home/ha865618/project/openpi_jepawam/checkpoints/pi05_robotwin2_clean20_ttt_wrapper_explicit_jepa_ttt_only/robotwin_clean20_ttt_wrapper_explicit_gbs16 resume_requested=1
+GPU preflight rank=1 host=evc37 cuda=0,1
+GPU preflight rank=0 host=evc37 cuda=0,1
+GPU preflight rank=2 host=evc49 cuda=0,1
+GPU preflight rank=3 host=evc49 cuda=0,1
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+NVIDIA H100 PCIe
+NVIDIA H100 PCIe
+NVIDIA H100 PCIe
+NVIDIA H100 PCIe
+rank=3 host=evc49 cuda=0,1
+rank=2 host=evc49 cuda=0,1
+rank=1 host=evc37 cuda=0,1
+rank=0 host=evc37 cuda=0,1
+Step 0: flow_loss=0.0681, grad_norm=0.0140, loss=0.0681, param_norm=1861.0349, vjepa_cosine=0.8395, vjepa_loss=0.1605, vjepa_weight=0.0000, weighted_vjepa_loss=0.0000
+Step 0: flow_loss=0.0681, grad_norm=0.0140, loss=0.0681, param_norm=1861.0349, vjepa_cosine=0.8395, vjepa_loss=0.1605, vjepa_weight=0.0000, weighted_vjepa_loss=0.0000
+Step 0: flow_loss=0.0681, grad_norm=0.0140, loss=0.0681, param_norm=1861.0349, vjepa_cosine=0.8395, vjepa_loss=0.1605, vjepa_weight=0.0000, weighted_vjepa_loss=0.0000
+Step 0: flow_loss=0.0681, grad_norm=0.0140, loss=0.0681, param_norm=1861.0349, vjepa_cosine=0.8395, vjepa_loss=0.1605, vjepa_weight=0.0000, weighted_vjepa_loss=0.0000
+Step 100: flow_loss=0.0735, grad_norm=0.0143, loss=0.0743, param_norm=1861.0348, vjepa_cosine=0.8391, vjepa_loss=0.1609, vjepa_weight=0.0051, weighted_vjepa_loss=0.0008
+Step 100: flow_loss=0.0735, grad_norm=0.0143, loss=0.0743, param_norm=1861.0348, vjepa_cosine=0.8391, vjepa_loss=0.1609, vjepa_weight=0.0051, weighted_vjepa_loss=0.0008
+Step 100: flow_loss=0.0735, grad_norm=0.0143, loss=0.0743, param_norm=1861.0348, vjepa_cosine=0.8391, vjepa_loss=0.1609, vjepa_weight=0.0051, weighted_vjepa_loss=0.0008
+Step 100: flow_loss=0.0735, grad_norm=0.0143, loss=0.0743, param_norm=1861.0348, vjepa_cosine=0.8391, vjepa_loss=0.1609, vjepa_weight=0.0051, weighted_vjepa_loss=0.0008
+Step 200: flow_loss=0.0730, grad_norm=0.0181, loss=0.0755, param_norm=1861.0371, vjepa_cosine=0.8390, vjepa_loss=0.1610, vjepa_weight=0.0151, weighted_vjepa_loss=0.0024
+Step 200: flow_loss=0.0730, grad_norm=0.0181, loss=0.0755, param_norm=1861.0371, vjepa_cosine=0.8390, vjepa_loss=0.1610, vjepa_weight=0.0151, weighted_vjepa_loss=0.0024
+Step 200: flow_loss=0.0730, grad_norm=0.0181, loss=0.0755, param_norm=1861.0371, vjepa_cosine=0.8390, vjepa_loss=0.1610, vjepa_weight=0.0151, weighted_vjepa_loss=0.0024
+Step 200: flow_loss=0.0730, grad_norm=0.0181, loss=0.0755, param_norm=1861.0371, vjepa_cosine=0.8390, vjepa_loss=0.1610, vjepa_weight=0.0151, weighted_vjepa_loss=0.0024
+Step 300: flow_loss=0.0633, grad_norm=0.1016, loss=0.0673, param_norm=1861.0533, vjepa_cosine=0.8393, vjepa_loss=0.1607, vjepa_weight=0.0251, weighted_vjepa_loss=0.0040
+Step 300: flow_loss=0.0633, grad_norm=0.1016, loss=0.0673, param_norm=1861.0533, vjepa_cosine=0.8393, vjepa_loss=0.1607, vjepa_weight=0.0251, weighted_vjepa_loss=0.0040
+Step 300: flow_loss=0.0633, grad_norm=0.1016, loss=0.0673, param_norm=1861.0533, vjepa_cosine=0.8393, vjepa_loss=0.1607, vjepa_weight=0.0251, weighted_vjepa_loss=0.0040
+Step 300: flow_loss=0.0633, grad_norm=0.1016, loss=0.0673, param_norm=1861.0533, vjepa_cosine=0.8393, vjepa_loss=0.1607, vjepa_weight=0.0251, weighted_vjepa_loss=0.0040

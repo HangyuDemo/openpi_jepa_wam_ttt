@@ -68,7 +68,9 @@ class Args:
     port: int = 8000
     run_id: Optional[str] = None  # Stable served-checkpoint ID; required for durable results/resume
     resize_size: int = 224
-    replan_steps: int = 5
+    # Keep rollout cadence aligned with the TTT LIBERO configs, which train
+    # on one physical observation every 8 action steps.
+    replan_steps: int = 8
     policy_reconnect_attempts: int = 2  # Recreate the websocket and retry the current episode after policy errors
     policy_reconnect_backoff_seconds: float = 1.0
     max_consecutive_policy_errors: int = 3  # Stop the run instead of filling the journal with cascading errors

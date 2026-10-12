@@ -202,7 +202,17 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
 
     @override
     def reset(self) -> None:
-        pass
+        if not websocket_inference_protocol.supports_reset(self._server_metadata):
+            return
+        if self._hard_aborted:
+            raise RuntimeError("Cannot reset an aborted policy connection")
+        self._ws.send(self._packer.pack(websocket_inference_protocol.make_reset_request()))
+        response = self._ws.recv(timeout=self._inference_timeout)
+        if isinstance(response, str):
+            raise RuntimeError(f"Error resetting policy server:\n{response}")
+        result = msgpack_numpy.unpackb(response)
+        if result.get("reset") is not True:
+            raise RuntimeError(f"Unexpected policy reset response: {result!r}")
 
     def close(self) -> None:
         if not self._hard_aborted:

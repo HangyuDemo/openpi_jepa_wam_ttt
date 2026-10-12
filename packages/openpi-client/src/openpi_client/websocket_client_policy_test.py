@@ -29,6 +29,20 @@ def test_default_connection_behavior_is_backward_compatible():
     assert policy.get_server_metadata() == {"ready": True}
 
 
+def test_reset_request_uses_advertised_server_capability():
+    metadata = websocket_inference_protocol.with_server_capabilities({})
+    connection = mock.Mock()
+    connection.recv.side_effect = [msgpack_numpy.packb(metadata), msgpack_numpy.packb({"reset": True})]
+
+    with mock.patch.object(websocket_client_policy.websockets.sync.client, "connect", return_value=connection):
+        policy = websocket_client_policy.WebsocketClientPolicy("localhost", 8000)
+        policy.reset()
+
+    request = msgpack_numpy.unpackb(connection.send.call_args.args[0])
+    assert websocket_inference_protocol.is_reset_request(request)
+    connection.recv.assert_has_calls([mock.call(), mock.call(timeout=None)])
+
+
 def test_connection_deadline_bounds_open_and_metadata_receive():
     connection = mock.Mock()
     connection.recv.return_value = msgpack_numpy.packb({})

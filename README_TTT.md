@@ -56,8 +56,14 @@ The config names follow:
 pi05_{libero|robotwin2_beat_block_hammer|robotwin2_clean20}_ttt_{inline|wrapper}_{explicit_jepa|implicit_full}_{ttt_only|action_expert}
 ```
 
+<<<<<<< HEAD
 `ttt_only` trains TTT slow parameters, the new register/future tokens, and the
 new Pi0.5 state projection;
+=======
+`ttt_only` freezes the pretrained VLM and action expert and trains only the
+TTT-specific parameters (the scanned `ttt` layers plus TTT register/future
+tokens);
+>>>>>>> 1152696 (little changes)
 `action_expert` additionally trains the Pi0.5 action expert projections,
 state projection, and Gemma expert weights. The V-JEPA predictor is frozen in
 both, so initialize from a **trained Pi0.5 + V-JEPA checkpoint**, not the
@@ -86,3 +92,11 @@ the `vjepa_target_root` (containing both `targets/` and `current/`) and the norm
 `README_ROBOTWIN2.md`. This repository does not yet include an end-to-end
 RoboTwin simulator evaluation adapter; the `Policy` itself carries state and
 exposes `reset()` for one environment.
+<<<<<<< HEAD
+=======
+
+For the four LIBERO runs on the normal H100 PCIe pool, first submit
+`scripts/run_libero_vjepa_precompute_normal.sbatch`, then submit the four
+`scripts/run_libero_ttt_normal.sbatch` routes after it completes. The training
+wrapper resumes the latest checkpoint when rerun with the same `EXP_NAME`.
+>>>>>>> 1152696 (little changes)
