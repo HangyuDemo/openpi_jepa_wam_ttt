@@ -112,6 +112,11 @@ class DataConfig:
     # Frozen current-observation encoder views, concatenated in this order for
     # explicit TTT K/V.
     vjepa_current_image_keys: tuple[str, ...] = ()
+    # Compute current-frame V-JEPA tokens in the training rank, after CPU collation.
+    vjepa_online_current: bool = False
+    vjepa_online_checkpoint: str | None = None
+    vjepa_online_source_root: str | None = None
+    vjepa_online_batch_size: int = 4
 
 
 class GroupFactory(Protocol):
@@ -327,6 +332,10 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
     # Keep explicit TTT K/V on the same teacher view as vjepa_image_key by
     # default. Additional views remain opt-in through this tuple.
     vjepa_current_image_keys: tuple[str, ...] = ()
+    vjepa_online_current: bool = False
+    vjepa_online_checkpoint: str | None = None
+    vjepa_online_source_root: str | None = None
+    vjepa_online_batch_size: int = 4
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -345,10 +354,20 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             "actions": "actions",
             "prompt": "prompt",
         }
-        if self.vjepa_target_root is not None:
+        if self.vjepa_target_root is not None and getattr(model_config, "vjepa_aux_loss_enabled", True):
             repack_mapping["vjepa_target"] = "vjepa_target"
-            if getattr(model_config, "ttt_enabled", False) and model_config.ttt_memory_source == "explicit_jepa":
-                repack_mapping["vjepa_current"] = "vjepa_current"
+        if (
+            self.vjepa_target_root is not None
+            and getattr(model_config, "ttt_enabled", False)
+            and model_config.ttt_memory_source == "explicit_jepa"
+            and not self.vjepa_online_current
+        ):
+            repack_mapping["vjepa_current"] = "vjepa_current"
+        if self.vjepa_online_current:
+            if self.vjepa_image_key != "image" or self.vjepa_current_image_keys not in ((), ("image",)):
+                raise ValueError("Online V-JEPA current currently supports only the LIBERO image view")
+            repack_mapping["vjepa_online_image"] = "image"
+            repack_mapping["vjepa_online_index"] = "index"
         repack_transform = _transforms.Group(inputs=[_transforms.RepackTransform(repack_mapping)])
 
         # The data transforms are applied to the data coming from the dataset *and* during inference.
@@ -400,6 +419,10 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             vjepa_future_offset=self.vjepa_future_offset,
             vjepa_image_key=self.vjepa_image_key,
             vjepa_current_image_keys=current_image_keys,
+            vjepa_online_current=self.vjepa_online_current,
+            vjepa_online_checkpoint=self.vjepa_online_checkpoint,
+            vjepa_online_source_root=self.vjepa_online_source_root,
+            vjepa_online_batch_size=self.vjepa_online_batch_size,
         )
 
 
@@ -431,10 +454,14 @@ class LeRobotRoboTwinDataConfig(DataConfigFactory):
             "actions": "action",
             "prompt": "prompt",
         }
-        if self.vjepa_target_root is not None:
+        if self.vjepa_target_root is not None and getattr(model_config, "vjepa_aux_loss_enabled", True):
             repack_mapping["vjepa_target"] = "vjepa_target"
-            if getattr(model_config, "ttt_enabled", False) and model_config.ttt_memory_source == "explicit_jepa":
-                repack_mapping["vjepa_current"] = "vjepa_current"
+        if (
+            self.vjepa_target_root is not None
+            and getattr(model_config, "ttt_enabled", False)
+            and model_config.ttt_memory_source == "explicit_jepa"
+        ):
+            repack_mapping["vjepa_current"] = "vjepa_current"
 
         data_transforms = _transforms.Group(
             inputs=[robotwin_policy.RoboTwinInputs(adapt_to_pi=self.adapt_to_pi)],
@@ -629,6 +656,11 @@ class TrainConfig:
     save_interval: int = 1000
     # If set, any existing checkpoints matching step % keep_period == 0 will not be deleted.
     keep_period: int | None = 5000
+    # Episode-level held-out validation; disabled for configs that do not opt in.
+    validation_fraction: float = 0.0
+    validation_interval: int = 1000
+    validation_num_batches: int = 8
+    validation_seed: int = 2026
 
     # If true, will overwrite the checkpoint directory if it already exists.
     overwrite: bool = False
@@ -667,6 +699,10 @@ class TrainConfig:
     def __post_init__(self) -> None:
         if self.resume and self.overwrite:
             raise ValueError("Cannot resume and overwrite at the same time.")
+        if not 0 <= self.validation_fraction < 1:
+            raise ValueError("validation_fraction must be in [0, 1)")
+        if self.validation_fraction and (self.validation_interval < 1 or self.validation_num_batches < 1):
+            raise ValueError("Validation interval and number of batches must be positive")
 
 
 # Use `get_config` if you need to get a config by name in your code.
@@ -1258,6 +1294,7 @@ for _dataset_name, _base_name in (
                         ttt_observation_stride=8,
                         ttt_tbptt_step_size=8,
                         ttt_current_jepa_num_views=1,
+                        vjepa_aux_loss_enabled=_train_action,
                     ),
                     freeze_filter=nnx.Not(nnx_utils.PathRegex(_trainable_pattern)),
                     weight_loader=weight_loaders.CheckpointWeightLoader(
@@ -1267,8 +1304,33 @@ for _dataset_name, _base_name in (
                     batch_size=4 if _train_action else 1,
                     num_train_steps=40_000,
                     save_interval=1000,
+                    keep_period=None if not _train_action else _base.keep_period,
                     ema_decay=None,
                 ))
+
+# Storage-light LIBERO TTT-only variants: the frozen JEPA target objective has
+# no gradient path to TTT weights. Explicit K/V is encoded from current images.
+for _base in tuple(_CONFIGS):
+    if not (_base.name.startswith("pi05_libero_ttt_") and _base.name.endswith("_ttt_only")):
+        continue
+    _online_current = _base.model.ttt_memory_source == "explicit_jepa"
+    _CONFIGS.append(dataclasses.replace(
+        _base,
+        name=f"{_base.name}_online",
+        model=dataclasses.replace(_base.model, vjepa_aux_loss_enabled=False),
+        validation_fraction=0.05,
+        validation_interval=400,
+        validation_num_batches=8,
+        save_interval=200,
+        keep_period=None,
+        data=dataclasses.replace(
+            _base.data,
+            vjepa_target_root=None,
+            vjepa_online_current=_online_current,
+            vjepa_online_checkpoint=("./data/weights/vjepa2/vjepa2_1_vitg_384.pt" if _online_current else None),
+            vjepa_online_source_root=("./third_party/vjepa2" if _online_current else None),
+        ),
+    ))
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
     raise ValueError("Config names must be unique.")

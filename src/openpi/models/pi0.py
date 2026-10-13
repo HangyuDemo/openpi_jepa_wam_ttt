@@ -70,6 +70,7 @@ class Pi0(_model.BaseModel):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
         self.use_vjepa_aux = config.use_vjepa_aux
+        self.vjepa_aux_loss_enabled = config.vjepa_aux_loss_enabled
         self.vjepa_num_queries = config.vjepa_num_queries
         self.vjepa_query_grid_size = config.vjepa_query_grid_size
         self.vjepa_target_grid_size = config.vjepa_target_grid_size
@@ -273,7 +274,7 @@ class Pi0(_model.BaseModel):
             ttt_state=state, return_ttt_state=True,
         )
         prediction = None
-        if self.use_vjepa_aux:
+        if self.use_vjepa_aux and self.vjepa_aux_loss_enabled:
             prediction = self.predict_vjepa_target(prefix_out[:, -self.vjepa_num_queries:])
         return prefix_tokens, prefix_mask, kv_cache, prediction
 
@@ -338,7 +339,7 @@ class Pi0(_model.BaseModel):
         )
         flow_loss = jnp.mean(jnp.square(velocity - (noise - actions)), axis=-1)
         aux_loss = None
-        if self.use_vjepa_aux:
+        if self.use_vjepa_aux and self.vjepa_aux_loss_enabled:
             if observation.vjepa_target is None:
                 raise ValueError("V-JEPA auxiliary training requires observation.vjepa_target")
             target = jax.lax.stop_gradient(observation.vjepa_target.astype(jnp.float32))
@@ -436,7 +437,7 @@ class Pi0(_model.BaseModel):
 
             flow_time = values[0].reshape((padded_steps, *values[0].shape[2:]))[:time_steps]
             flow = jnp.swapaxes(flow_time, 0, 1)
-            if self.use_vjepa_aux:
+            if self.use_vjepa_aux and self.vjepa_aux_loss_enabled:
                 aux_time = values[1].reshape((padded_steps, *values[1].shape[2:]))[:time_steps]
                 aux = jnp.swapaxes(aux_time, 0, 1)
             else:
@@ -475,7 +476,7 @@ class Pi0(_model.BaseModel):
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
         flow_loss = jnp.mean(jnp.square(v_t - u_t), axis=-1)
-        if not self.use_vjepa_aux:
+        if not self.use_vjepa_aux or not self.vjepa_aux_loss_enabled:
             return flow_loss, None
         if observation.vjepa_target is None:
             raise ValueError("V-JEPA auxiliary training requires observation.vjepa_target")

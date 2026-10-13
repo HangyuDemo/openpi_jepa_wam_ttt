@@ -72,6 +72,18 @@ def create_trained_policy(
         except ImportError:
             pytorch_device = "cpu"
 
+    vjepa_encoder = None
+    if data_config.vjepa_online_current:
+        from openpi.training.online_vjepa import OnlineVJepaCurrent
+
+        if not data_config.vjepa_online_checkpoint or not data_config.vjepa_online_source_root:
+            raise ValueError("Online V-JEPA inference requires checkpoint and source root")
+        vjepa_encoder = OnlineVJepaCurrent(
+            data_config.vjepa_online_checkpoint,
+            data_config.vjepa_online_source_root,
+            batch_size=1,
+        )
+
     return _policy.Policy(
         model,
         transforms=[
@@ -99,5 +111,6 @@ def create_trained_policy(
             ),
         },
         is_pytorch=is_pytorch,
+        vjepa_encoder=vjepa_encoder,
         pytorch_device=pytorch_device if is_pytorch else None,
     )

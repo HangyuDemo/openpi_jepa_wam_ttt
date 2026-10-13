@@ -21,6 +21,17 @@ from openpi.shared import nnx_utils
 BasePolicy: TypeAlias = _base_policy.BasePolicy
 
 
+def _inject_online_vjepa_current(inputs: dict, encoder: Any) -> dict:
+    """Encode the raw camera frame before policy image resizing and normalization."""
+    raw_image = np.asarray(inputs.pop("vjepa_online_image", inputs["observation/image"]))
+    if raw_image.ndim != 3 or raw_image.shape[-1] != 3 or raw_image.dtype != np.uint8:
+        raise ValueError(f"Online V-JEPA inference expects a uint8 HWC image, got {raw_image.shape}/{raw_image.dtype}")
+    inputs["vjepa_current"] = encoder.encode(
+        raw_image[None, None, ...], np.zeros((1, 1), dtype=np.int64)
+    )[0, 0]
+    return inputs
+
+
 def _select_jax_inference_rng(rng: at.KeyArrayLike, seed: int | None) -> tuple[at.KeyArrayLike, at.KeyArrayLike]:
     if seed is None:
         return tuple(jax.random.split(rng))
@@ -39,6 +50,7 @@ class Policy(BasePolicy):
         metadata: dict[str, Any] | None = None,
         pytorch_device: str = "cpu",
         is_pytorch: bool = False,
+        vjepa_encoder: Any | None = None,
     ):
         """Initialize the Policy.
 
@@ -62,6 +74,7 @@ class Policy(BasePolicy):
         self._pytorch_device = pytorch_device
         self._ttt_enabled = not is_pytorch and bool(getattr(model, "ttt_enabled", False))
         self._ttt_state = None
+        self._vjepa_encoder = vjepa_encoder
 
         if self._is_pytorch_model:
             self._model = self._model.to(pytorch_device)
@@ -89,6 +102,8 @@ class Policy(BasePolicy):
 
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
+        if self._vjepa_encoder is not None:
+            inputs = _inject_online_vjepa_current(inputs, self._vjepa_encoder)
         inputs = self._input_transform(inputs)
         if not self._is_pytorch_model:
             # Make a batch and convert to jax.Array.

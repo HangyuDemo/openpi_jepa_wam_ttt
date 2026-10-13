@@ -5,6 +5,7 @@ data/
 pretrained/
 artifacts/
 wandb/
+slurm_logs/
 
 # External V-JEPA checkout; clone separately as documented in README_JEPAWAM.md.
 third_party/vjepa2/

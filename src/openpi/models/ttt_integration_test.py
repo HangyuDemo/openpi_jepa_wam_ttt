@@ -10,6 +10,7 @@ import numpy as np
 
 from openpi.models import pi0_config
 from openpi.models import ttt_memory
+from openpi.shared import nnx_utils
 from openpi.training.data_loader import TemporalWindowDataset
 
 
@@ -59,6 +60,31 @@ class TTTIntegrationTest(unittest.TestCase):
         _, _, state_a = model._ttt_loss_frame(jax.random.key(5), observation, actions, initial, train=False)
         _, _, state_c = model._ttt_loss_frame(jax.random.key(5), changed_current, actions, initial, train=False)
         self.assertFalse(np.allclose(state_a.w1, state_c.w1))
+
+    def test_ttt_only_flow_requires_current_but_not_future_target(self):
+        config = dataclasses.replace(self._config(), vjepa_aux_loss_enabled=False)
+        model = config.create(jax.random.key(0))
+        observation, actions = config.fake_obs(1), config.fake_act(1)
+        self.assertIsNone(observation.vjepa_target)
+        self.assertIsNotNone(observation.vjepa_current)
+        flow, aux = model.compute_loss_components(jax.random.key(1), observation, actions)
+        self.assertIsNone(aux)
+        np.testing.assert_allclose(model.compute_loss(jax.random.key(1), observation, actions), flow)
+
+        loss, grads = nnx.value_and_grad(
+            lambda m: jnp.mean(m.compute_loss(jax.random.key(2), observation, actions, train=True)),
+            argnums=nnx.DiffState(0, nnx_utils.PathRegex(".*ttt.*")),
+        )(model)
+        self.assertTrue(np.isfinite(np.asarray(loss)))
+        self.assertTrue(all(np.all(np.isfinite(np.asarray(leaf))) for leaf in jax.tree.leaves(grads)))
+
+        from types import SimpleNamespace
+        from scripts.train import validation_step
+
+        graphdef, params = nnx.split(model)
+        validation_state = SimpleNamespace(model_def=graphdef, params=params)
+        validation_loss = validation_step(config, jax.random.key(3), validation_state, (observation, actions))
+        self.assertTrue(np.isfinite(np.asarray(validation_loss)))
 
     def test_temporal_context_and_inference_state(self):
         config = self._config("implicit_full", context=2)
@@ -116,6 +142,35 @@ class TTTIntegrationTest(unittest.TestCase):
         loss, grads = nnx.value_and_grad(loss_fn)(model)
         self.assertTrue(np.isfinite(np.asarray(loss)))
         self.assertTrue(all(np.all(np.isfinite(np.asarray(leaf))) for leaf in jax.tree.leaves(grads)))
+
+    def test_storage_light_ttt_has_no_future_target_and_keeps_gradients(self):
+        for source in ("explicit_jepa", "implicit_full"):
+            with self.subTest(source=source):
+                config = dataclasses.replace(
+                    self._config(source, context=2, tbptt=1), vjepa_aux_loss_enabled=False
+                )
+                model = config.create(jax.random.key(20))
+                observation, actions = config.fake_obs(1), config.fake_act(1)
+                self.assertIsNone(observation.vjepa_target)
+                temporal_obs = jax.tree.map(
+                    lambda x: None if x is None else jnp.stack((x, x), axis=1), observation
+                )
+                temporal_obs = dataclasses.replace(
+                    temporal_obs, time_valid_mask=jnp.array([[True, True]])
+                )
+                temporal_actions = jnp.stack((actions, actions), axis=1)
+
+                def loss_fn(model):
+                    flow, aux = model.compute_loss_components(
+                        jax.random.key(21), temporal_obs, temporal_actions, train=True
+                    )
+                    self.assertIsNone(aux)
+                    self.assertEqual(flow.shape, (1, 2, 2))
+                    return jnp.mean(flow)
+
+                loss, grads = nnx.value_and_grad(loss_fn)(model)
+                self.assertTrue(np.isfinite(np.asarray(loss)))
+                self.assertTrue(all(np.all(np.isfinite(np.asarray(leaf))) for leaf in jax.tree.leaves(grads)))
 
     def test_episode_window_does_not_cross_boundary(self):
         class Frames:

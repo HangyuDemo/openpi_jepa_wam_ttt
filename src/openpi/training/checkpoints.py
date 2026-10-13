@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures as futures
 import dataclasses
+import json
 import logging
+import os
+import pathlib
 from typing import Protocol
 
 from etils import epath
@@ -84,6 +87,21 @@ def save_state(
         "params": {"params": params},
     }
     checkpoint_manager.save(step, items)
+
+
+def read_best_validation(checkpoint_dir: epath.Path | str) -> tuple[int | None, float]:
+    path = pathlib.Path(checkpoint_dir) / "best_validation.json"
+    if not path.is_file():
+        return None, float("inf")
+    record = json.loads(path.read_text())
+    return int(record["step"]), float(record["flow_loss"])
+
+
+def write_best_validation_loss(checkpoint_dir: epath.Path | str, step: int, loss: float) -> None:
+    directory = pathlib.Path(checkpoint_dir)
+    temporary = directory / ".best_validation.json.tmp"
+    temporary.write_text(json.dumps({"step": step, "flow_loss": loss}, indent=2) + "\n")
+    os.replace(temporary, directory / "best_validation.json")
 
 
 def restore_state(

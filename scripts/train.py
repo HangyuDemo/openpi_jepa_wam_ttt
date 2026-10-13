@@ -148,7 +148,7 @@ def init_train_state(
         train_state_shape.params.filter(config.trainable_filter).to_pure_dict()
     )
     trainable_paths = ["/".join(map(str, path)) for path in trainable_shapes]
-    if config.name.endswith("_ttt_only"):
+    if config.name.endswith(("_ttt_only", "_ttt_only_online")):
         def is_ttt_parameter(path: str) -> bool:
             parts = tuple(path.split("/"))
             return "ttt" in parts or any(part.startswith("ttt_") for part in parts)
@@ -238,13 +238,13 @@ def train_step(
 
     # Filter out frozen params.
     diff_state = nnx.DiffState(0, config.trainable_filter)
-    if getattr(config.model, "use_vjepa_aux", False):
+    if getattr(config.model, "use_vjepa_aux", False) and getattr(config.model, "vjepa_aux_loss_enabled", True):
         (loss, loss_info), grads = nnx.value_and_grad(vjepa_loss_fn, argnums=diff_state, has_aux=True)(
             model, train_rng, observation, actions
         )
     else:
         loss, grads = nnx.value_and_grad(loss_fn, argnums=diff_state)(model, train_rng, observation, actions)
-        loss_info = {}
+        loss_info = {"flow_loss": loss} if getattr(config.model, "use_vjepa_aux", False) else {}
 
     params = state.params.filter(config.trainable_filter)
     updates, new_opt_state = state.tx.update(grads, state.opt_state, params)
@@ -281,10 +281,36 @@ def train_step(
     return new_state, info
 
 
+def validation_step(
+    config: _config.TrainConfig,
+    rng: at.KeyArrayLike,
+    state: training_utils.TrainState,
+    batch: tuple[_model.Observation, _model.Actions],
+) -> at.Array:
+    """Evaluate action flow matching loss on fixed held-out episodes."""
+    model = nnx.merge(state.model_def, state.params)
+    model.eval()
+    observation, actions = batch
+    flow_loss, _ = model.compute_loss_components(rng, observation, actions, train=False)
+    if observation.time_valid_mask is None:
+        return jnp.mean(flow_loss)
+    mask = observation.time_valid_mask.astype(jnp.float32)
+    return jnp.sum(flow_loss * mask[..., None]) / (jnp.maximum(mask.sum(), 1) * flow_loss.shape[-1])
+
+
 def main(config: _config.TrainConfig):
     init_logging()
     initialize_jax_distributed()
     logging.info(f"Running on: {platform.node()}")
+
+    if config.name.endswith("_ttt_only_online") and (
+        jax.process_count() != 4 or jax.device_count() != 4 or jax.local_device_count() != 1
+    ):
+        raise RuntimeError(
+            "Online LIBERO TTT requires four JAX processes with one GPU each; "
+            f"got processes={jax.process_count()}, devices={jax.device_count()}, "
+            f"local_devices={jax.local_device_count()}"
+        )
 
     if config.batch_size % jax.device_count() != 0:
         raise ValueError(
@@ -300,8 +326,9 @@ def main(config: _config.TrainConfig):
     data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
     replicated_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
 
+    latest_checkpoint_dir = config.checkpoint_dir / "latest" if config.validation_fraction else config.checkpoint_dir
     checkpoint_manager, resuming = _checkpoints.initialize_checkpoint_dir(
-        config.checkpoint_dir,
+        latest_checkpoint_dir,
         keep_period=config.keep_period,
         overwrite=config.overwrite,
         resume=config.resume,
@@ -317,6 +344,30 @@ def main(config: _config.TrainConfig):
         sharding=data_sharding,
         shuffle=True,
     )
+    validation_loader = None
+    best_manager = None
+    best_loss = float("inf")
+    if config.validation_fraction:
+        validation_loader = _data_loader.create_data_loader(
+            config,
+            sharding=data_sharding,
+            shuffle=False,
+            num_batches=config.validation_num_batches,
+            split="validation",
+            online_vjepa_encoder=data_loader.online_vjepa_encoder(),
+            num_workers=0,
+        )
+        best_manager, _ = _checkpoints.initialize_checkpoint_dir(
+            config.checkpoint_dir / "best",
+            keep_period=None,
+            overwrite=False,
+            resume=True,
+        )
+        best_step, best_loss = _checkpoints.read_best_validation(config.checkpoint_dir)
+        if best_step != best_manager.latest_step():
+            raise ValueError(
+                f"Best checkpoint/metric mismatch: checkpoint={best_manager.latest_step()}, metric={best_step}"
+            )
     data_iter = iter(data_loader)
     batch = next(data_iter)
     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
@@ -334,6 +385,13 @@ def main(config: _config.TrainConfig):
         out_shardings=(train_state_sharding, replicated_sharding),
         donate_argnums=(1,),
     )
+    pvalidation_step = None
+    if validation_loader is not None:
+        pvalidation_step = jax.jit(
+            functools.partial(validation_step, config),
+            in_shardings=(replicated_sharding, train_state_sharding, data_sharding),
+            out_shardings=replicated_sharding,
+        )
 
     start_step = int(train_state.step)
     pbar = tqdm.tqdm(
@@ -358,11 +416,37 @@ def main(config: _config.TrainConfig):
             infos = []
         batch = next(data_iter)
 
-        if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
-            _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step)
+        completed_step = step + 1
+        final_step = completed_step == config.num_train_steps
+        if completed_step % config.save_interval == 0 or final_step:
+            _checkpoints.save_state(checkpoint_manager, train_state, data_loader, completed_step)
+            checkpoint_manager.wait_until_finished()
+
+        if validation_loader is not None and (completed_step % config.validation_interval == 0 or final_step):
+            values = []
+            for validation_index, validation_batch in enumerate(validation_loader):
+                validation_rng = jax.random.fold_in(jax.random.key(config.validation_seed), validation_index)
+                with sharding.set_mesh(mesh):
+                    values.append(pvalidation_step(validation_rng, train_state, validation_batch))
+            validation_loss = float(jax.device_get(jnp.mean(jnp.stack(values))))
+            if not np.isfinite(validation_loss):
+                raise ValueError(f"Non-finite validation flow loss at step {completed_step}: {validation_loss}")
+            if jax.process_index() == 0:
+                logging.info("Validation flow loss at step %d: %.6f (best %.6f)", completed_step, validation_loss, best_loss)
+                if config.wandb_enabled:
+                    wandb.log({"validation/flow_loss": validation_loss}, step=completed_step)
+            if validation_loss < best_loss:
+                assert best_manager is not None
+                _checkpoints.save_state(best_manager, train_state, data_loader, completed_step)
+                best_manager.wait_until_finished()
+                if jax.process_index() == 0:
+                    _checkpoints.write_best_validation_loss(config.checkpoint_dir, completed_step, validation_loss)
+                best_loss = validation_loss
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()
+    if best_manager is not None:
+        best_manager.wait_until_finished()
 
 
 if __name__ == "__main__":

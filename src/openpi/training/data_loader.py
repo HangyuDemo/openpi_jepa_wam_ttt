@@ -52,6 +52,10 @@ class DataLoader(Protocol[T_co]):
     def __iter__(self) -> Iterator[T_co]:
         raise NotImplementedError("Subclasses of DataLoader should implement __iter__.")
 
+    def online_vjepa_encoder(self):
+        """Return the rank-local frozen encoder, if one is attached."""
+        raise NotImplementedError
+
 
 class TransformedDataset(Dataset[T_co]):
     def __init__(self, dataset: Dataset, transforms: Sequence[_transforms.DataTransformFn]):
@@ -105,6 +109,34 @@ def _episode_starts(dataset: Dataset) -> np.ndarray:
     return result
 
 
+def _split_episode_indices(
+    dataset: Dataset, split: Literal["train", "validation"], fraction: float, seed: int,
+    *, limit: int | None = None,
+) -> np.ndarray:
+    """Choose whole LeRobot episodes before taking any temporal windows."""
+    source = dataset
+    while hasattr(source, "_dataset"):
+        source = source._dataset
+    if not hasattr(source, "episode_data_index"):
+        raise ValueError("Episode-level validation requires LeRobot episode boundaries")
+    bounds = source.episode_data_index
+    n_episodes = len(bounds["from"])
+    if n_episodes < 2:
+        raise ValueError("Episode-level validation requires at least two episodes")
+    n_validation = max(1, min(n_episodes - 1, round(n_episodes * fraction)))
+    held_out = set(np.random.default_rng(seed).permutation(n_episodes)[:n_validation].tolist())
+    indices = np.concatenate([
+        np.arange(int(start), int(end), dtype=np.int64)
+        for episode, (start, end) in enumerate(zip(bounds["from"], bounds["to"], strict=True))
+        if (episode in held_out) == (split == "validation")
+    ])
+    if limit is not None:
+        if len(indices) < limit:
+            raise ValueError(f"Validation needs {limit} held-out frames, found {len(indices)}")
+        indices = np.sort(np.random.default_rng(seed + 1).choice(indices, size=limit, replace=False))
+    return indices
+
+
 class VJepaTargetDataset(Dataset):
     """Adds one precomputed V-JEPA target row to each LeRobot sample."""
 
@@ -117,6 +149,7 @@ class VJepaTargetDataset(Dataset):
         expected_future_offset: int | None = None,
         expected_image_key: str | None = None,
         expected_num_frames: int | None = None,
+        require_target: bool = True,
         require_current: bool = False,
         expected_current_image_keys: Sequence[str] = (),
         mmap_cache_size: int = 16,
@@ -127,6 +160,7 @@ class VJepaTargetDataset(Dataset):
         self._target_root = Path(target_root)
         self._expected_shape = expected_shape
         self._mmap_cache_size = mmap_cache_size
+        self._require_target = require_target
         self._require_current = require_current
         self._expected_current_shape = (len(expected_current_image_keys) * expected_shape[0], expected_shape[1])
         self._cache: OrderedDict[tuple[str, int], np.memmap] = OrderedDict()
@@ -183,13 +217,14 @@ class VJepaTargetDataset(Dataset):
         sample = dict(self._dataset[index])
         episode_index = int(np.asarray(sample["episode_index"]).item())
         frame_index = int(np.asarray(sample["frame_index"]).item())
-        target = self._get_episode("targets", episode_index, self._expected_shape)
-        if not 0 <= frame_index < target.shape[0]:
-            raise IndexError(
-                f"Frame {frame_index} is outside V-JEPA target episode {episode_index} with {target.shape[0]} rows"
-            )
-        # The copy decouples the row from an mmap that may be evicted before collation.
-        sample["vjepa_target"] = np.array(target[frame_index], copy=True)
+        if self._require_target:
+            target = self._get_episode("targets", episode_index, self._expected_shape)
+            if not 0 <= frame_index < target.shape[0]:
+                raise IndexError(
+                    f"Frame {frame_index} is outside V-JEPA target episode {episode_index} with {target.shape[0]} rows"
+                )
+            # The copy decouples the row from an mmap that may be evicted before collation.
+            sample["vjepa_target"] = np.array(target[frame_index], copy=True)
         if self._require_current:
             current = self._get_episode("current", episode_index, self._expected_current_shape)
             if not 0 <= frame_index < current.shape[0]:
@@ -320,12 +355,17 @@ def create_torch_dataset(
     )
 
     use_vjepa_aux = bool(getattr(model_config, "use_vjepa_aux", False))
+    require_target = use_vjepa_aux and bool(getattr(model_config, "vjepa_aux_loss_enabled", True))
     require_current = bool(
         getattr(model_config, "ttt_enabled", False)
         and getattr(model_config, "ttt_memory_source", None) == "explicit_jepa"
     )
-    if use_vjepa_aux and data_config.vjepa_target_root is None:
+    if require_target and data_config.vjepa_target_root is None:
         raise ValueError("V-JEPA auxiliary training requires data.vjepa_target_root")
+    if require_current and data_config.vjepa_target_root is None and not data_config.vjepa_online_current:
+        raise ValueError("Explicit TTT requires precomputed current tokens or online V-JEPA encoding")
+    if data_config.vjepa_online_current and not require_current:
+        raise ValueError("Online V-JEPA current encoding requires explicit_jepa TTT")
     if data_config.vjepa_target_root is not None:
         if not use_vjepa_aux:
             raise ValueError("V-JEPA targets were configured for a model with use_vjepa_aux=False")
@@ -338,7 +378,8 @@ def create_torch_dataset(
             expected_future_offset=data_config.vjepa_future_offset,
             expected_image_key=data_config.vjepa_image_key,
             expected_num_frames=len(dataset),
-            require_current=require_current,
+            require_target=require_target,
+            require_current=require_current and not data_config.vjepa_online_current,
             expected_current_image_keys=data_config.vjepa_current_image_keys,
             mmap_cache_size=data_config.vjepa_mmap_cache_size,
         )
@@ -426,6 +467,9 @@ def create_data_loader(
     num_batches: int | None = None,
     skip_norm_stats: bool = False,
     framework: Literal["jax", "pytorch"] = "jax",
+    split: Literal["train", "validation"] = "train",
+    online_vjepa_encoder=None,
+    num_workers: int | None = None,
 ) -> DataLoader[tuple[_model.Observation, _model.Actions]]:
     """Create a data loader for training.
 
@@ -459,10 +503,14 @@ def create_data_loader(
         sharding=sharding,
         shuffle=shuffle,
         num_batches=num_batches,
-        num_workers=config.num_workers,
+        num_workers=config.num_workers if num_workers is None else num_workers,
         seed=config.seed,
         skip_norm_stats=skip_norm_stats,
         framework=framework,
+        split=split,
+        validation_fraction=config.validation_fraction,
+        validation_seed=config.validation_seed,
+        online_vjepa_encoder=online_vjepa_encoder,
     )
 
 
@@ -479,6 +527,10 @@ def create_torch_data_loader(
     num_workers: int = 0,
     seed: int = 0,
     framework: str = "jax",
+    split: Literal["train", "validation"] = "train",
+    validation_fraction: float = 0.0,
+    validation_seed: int = 2026,
+    online_vjepa_encoder=None,
 ) -> DataLoader[tuple[_model.Observation, _model.Actions]]:
     """Create a data loader for training.
 
@@ -507,6 +559,13 @@ def create_torch_data_loader(
             model_config.ttt_context_length,
             model_config.ttt_observation_stride,
         )
+    if validation_fraction:
+        limit = None if split == "train" else batch_size * num_batches if num_batches is not None else None
+        indices = _split_episode_indices(dataset, split, validation_fraction, validation_seed, limit=limit)
+        if split == "validation" and framework == "jax":
+            indices = indices[jax.process_index() :: jax.process_count()]
+        dataset = torch.utils.data.Subset(dataset, indices.tolist())
+        logging.info("%s split: %d temporal windows on process %d", split, len(dataset), jax.process_index())
 
     # Use TorchDataLoader for both frameworks
     # For PyTorch DDP, create DistributedSampler and divide batch size by world size
@@ -538,6 +597,8 @@ def create_torch_data_loader(
         num_workers=num_workers,
         seed=seed,
         framework=framework,
+        online_vjepa_config=data_config if data_config.vjepa_online_current else None,
+        online_vjepa_encoder=online_vjepa_encoder,
     )
 
     return DataLoaderImpl(data_config, data_loader)
@@ -599,6 +660,8 @@ class TorchDataLoader:
         num_workers: int = 0,
         seed: int = 0,
         framework: str = "jax",
+        online_vjepa_config: _config.DataConfig | None = None,
+        online_vjepa_encoder=None,
     ):
         """Create a PyTorch data loader.
 
@@ -627,6 +690,19 @@ class TorchDataLoader:
                 jax.sharding.PartitionSpec("B"),
             )
         self._num_batches = num_batches
+        self._online_vjepa = online_vjepa_encoder
+        if online_vjepa_config is not None and self._online_vjepa is None:
+            if framework != "jax":
+                raise ValueError("Online V-JEPA current encoding currently requires the JAX loader")
+            if not online_vjepa_config.vjepa_online_checkpoint or not online_vjepa_config.vjepa_online_source_root:
+                raise ValueError("Online V-JEPA requires checkpoint and source-root paths")
+            from openpi.training.online_vjepa import OnlineVJepaCurrent
+
+            self._online_vjepa = OnlineVJepaCurrent(
+                online_vjepa_config.vjepa_online_checkpoint,
+                online_vjepa_config.vjepa_online_source_root,
+                online_vjepa_config.vjepa_online_batch_size,
+            )
 
         mp_context = None
         if num_workers > 0:
@@ -666,6 +742,10 @@ class TorchDataLoader:
                 except StopIteration:
                     break  # We've exhausted the dataset. Create a new iterator and start over.
                 num_items += 1
+                if self._online_vjepa is not None:
+                    images = batch.pop("vjepa_online_image")
+                    indices = batch.pop("vjepa_online_index")
+                    batch["vjepa_current"] = self._online_vjepa.encode(images, indices)
                 # For JAX, convert to sharded arrays; for PyTorch, return torch tensors
                 if self._sharding is not None:
                     yield jax.tree.map(lambda x: jax.make_array_from_process_local_data(self._sharding, x), batch)
@@ -739,6 +819,9 @@ class DataLoaderImpl(DataLoader):
 
     def data_config(self) -> _config.DataConfig:
         return self._data_config
+
+    def online_vjepa_encoder(self):
+        return getattr(self._data_loader, "_online_vjepa", None)
 
     def __iter__(self):
         for batch in self._data_loader:

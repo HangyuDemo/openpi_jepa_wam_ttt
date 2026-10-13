@@ -84,6 +84,16 @@ class LiberoInputs(transforms.DataTransformFn):
             inputs["vjepa_target"] = data["vjepa_target"]
         if "vjepa_current" in data:
             inputs["vjepa_current"] = data["vjepa_current"]
+        if "vjepa_online_image" in data:
+            # Keep the original resolution, before ModelTransformFactory resizes
+            # the Pi0 image to 224 pixels.
+            raw = np.asarray(data["vjepa_online_image"])
+            if np.issubdtype(raw.dtype, np.floating):
+                raw = np.rint(raw * 255).clip(0, 255).astype(np.uint8)
+            if raw.shape[0] == 3:
+                raw = einops.rearrange(raw, "c h w -> h w c")
+            inputs["vjepa_online_image"] = raw
+            inputs["vjepa_online_index"] = data["vjepa_online_index"]
 
         return inputs
 

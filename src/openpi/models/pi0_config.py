@@ -34,6 +34,8 @@ class Pi0Config(_model.BaseModelConfig):
 
     # Optional future-representation objective. Disabled by default so existing Pi0/Pi0.5 models are unchanged.
     use_vjepa_aux: bool = False
+    # Keep the JEPA query architecture while omitting the future-target loss.
+    vjepa_aux_loss_enabled: bool = True
     vjepa_num_queries: int = 64
     vjepa_query_grid_size: int = 8
     vjepa_target_grid_size: int = 24
@@ -140,7 +142,7 @@ class Pi0Config(_model.BaseModelConfig):
                     jax.ShapeDtypeStruct(
                         [batch_size, self.vjepa_target_grid_size**2, self.vjepa_target_dim], jnp.float16
                     )
-                    if self.use_vjepa_aux
+                    if self.use_vjepa_aux and self.vjepa_aux_loss_enabled
                     else None
                 ),
                 vjepa_current=(

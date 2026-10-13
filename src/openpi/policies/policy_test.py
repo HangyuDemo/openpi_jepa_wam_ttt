@@ -53,6 +53,22 @@ def test_aloha_inputs_preserve_vjepa_target():
     np.testing.assert_array_equal(inputs["vjepa_target"], target)
 
 
+def test_online_vjepa_inference_uses_raw_camera_frame():
+    class Encoder:
+        def encode(self, images, indices):
+            np.testing.assert_array_equal(images[0, 0], np.full((256, 256, 3), 7, dtype=np.uint8))
+            np.testing.assert_array_equal(indices, [[0]])
+            return np.ones((1, 1, 9, 16), dtype=np.float16)
+
+    inputs = {
+        "observation/image": np.zeros((224, 224, 3), dtype=np.uint8),
+        "vjepa_online_image": np.full((256, 256, 3), 7, dtype=np.uint8),
+    }
+    result = _policy._inject_online_vjepa_current(inputs, Encoder())
+    assert "vjepa_online_image" not in result
+    assert result["vjepa_current"].shape == (9, 16)
+
+
 @pytest.mark.manual
 def test_infer():
     config = _config.get_config("pi0_aloha_sim")

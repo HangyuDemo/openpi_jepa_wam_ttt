@@ -21,6 +21,25 @@ class _ListDataset:
         return len(self._items)
 
 
+def test_episode_validation_split_is_fixed_and_disjoint():
+    class Episodes(_ListDataset):
+        episode_data_index = {
+            "from": np.arange(0, 100, 10),
+            "to": np.arange(10, 110, 10),
+        }
+
+    dataset = Episodes(list(range(100)))
+    train = _data_loader._split_episode_indices(dataset, "train", 0.2, 2026)
+    validation = _data_loader._split_episode_indices(dataset, "validation", 0.2, 2026)
+    selected = _data_loader._split_episode_indices(dataset, "validation", 0.2, 2026, limit=8)
+    assert len(train) == 80 and len(validation) == 20 and len(selected) == 8
+    assert set(train).isdisjoint(validation)
+    assert set(selected).issubset(validation)
+    np.testing.assert_array_equal(
+        selected, _data_loader._split_episode_indices(dataset, "validation", 0.2, 2026, limit=8)
+    )
+
+
 def test_robotwin_paper_temporal_settings():
     for dataset in ("robotwin2_beat_block_hammer", "robotwin2_clean20"):
         plain = _config.get_config(f"pi05_{dataset}")
@@ -91,6 +110,21 @@ def test_vjepa_target_dataset(tmp_path):
     np.testing.assert_array_equal(dataset[1]["vjepa_current"], current[2])
     assert dataset[0]["vjepa_target"].dtype == np.float16
     assert dataset[0]["vjepa_current"].dtype == np.float16
+
+    # TTT-only training uses current features without opening future targets.
+    (episode_dir / "episode_000007.npy").unlink()
+    current_only = _data_loader.VJepaTargetDataset(
+        _ListDataset([{"episode_index": np.int64(7), "frame_index": np.int64(2)}]),
+        target_root,
+        expected_shape=(6, 4),
+        require_target=False,
+        require_current=True,
+        expected_current_image_keys=("high",),
+    )[0]
+    assert "vjepa_target" not in current_only
+    np.testing.assert_array_equal(current_only["vjepa_current"], current[2])
+
+    np.save(episode_dir / "episode_000007.npy", episode, allow_pickle=False)
 
     with pytest.raises(ValueError, match="future offset mismatch"):
         _data_loader.VJepaTargetDataset(
