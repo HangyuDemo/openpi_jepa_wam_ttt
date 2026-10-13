@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Four-card LIBERO TTT training wrapper for normal H100 PCIe nodes.
-# A normal node has two H100 PCIe cards, therefore this launches one JAX
-# process per card over two nodes. Re-running the same experiment resumes the
-# latest completed checkpoint automatically.
+# Four-GPU LIBERO TTT training wrapper. Normal uses 2 nodes x 2 GPUs;
+# highgpu uses 1 node x 4 GPUs with sbatch resource overrides. Re-running
+# the same experiment resumes the latest completed checkpoint automatically.
 #SBATCH -J openpi-libero-ttt
 #SBATCH -p normal
 #SBATCH -N 2
@@ -12,7 +11,7 @@
 #SBATCH --gres=gpu:2
 #SBATCH -c 16
 #SBATCH --mem=400G
-#SBATCH -t 2-00:00:00
+#SBATCH -t 3-00:00:00
 #SBATCH --requeue
 # evc22/evc48 also failed direct CUDA/nvidia-smi checks in prior launches.
 # Keep the known drain/maintenance nodes out as well.
@@ -35,6 +34,13 @@ FSDP_DEVICES="${FSDP_DEVICES:-4}"
 NUM_STEPS="${NUM_STEPS:-40000}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 WANDB_ENABLED="${WANDB_ENABLED:-1}"
+TASKS_PER_NODE="${TASKS_PER_NODE:-2}"
+GPUS_PER_NODE="${GPUS_PER_NODE:-2}"
+
+if (( SLURM_NTASKS != 4 || TASKS_PER_NODE * SLURM_JOB_NUM_NODES != 4 || GPUS_PER_NODE != TASKS_PER_NODE )); then
+    echo "Expected four ranks, one per GPU; check Slurm allocation and TASKS_PER_NODE/GPUS_PER_NODE" >&2
+    exit 2
+fi
 
 export PYTHONPATH="${ROOT}/src:${ROOT}/packages/openpi-client/src${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONNOUSERSITE=1
@@ -47,7 +53,7 @@ export PYTHONUNBUFFERED=1
 # try to repair this shared dataset through Hugging Face downloads.
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
-# Each local rank must see both GPUs so NCCL can establish peer connections.
+# Each local rank must see all local GPUs so NCCL can establish peer connections.
 unset JAX_LOCAL_DEVICE_IDS
 
 cd "${ROOT}"
@@ -93,6 +99,7 @@ fi
 
 export ROOT PYTHON_BIN CONFIG_NAME EXP_NAME DATASET_ROOT BASE_CKPT TARGET_ROOT
 export CHECKPOINT_BASE_DIR BATCH_SIZE FSDP_DEVICES NUM_STEPS NUM_WORKERS WANDB_ENABLED WANDB_DISABLED
+export TASKS_PER_NODE GPUS_PER_NODE
 export RESUME_ENABLED=1
 
 COORDINATOR="$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)"
@@ -102,14 +109,14 @@ echo "config=${CONFIG_NAME} exp=${EXP_NAME} gbs=${BATCH_SIZE} fsdp=${FSDP_DEVICE
 echo "checkpoint=${CHECKPOINT_DIR} resume_requested=1"
 
 # Fail before JAX initialization if any assigned task cannot see a healthy GPU.
-srun --kill-on-bad-exit=1 --ntasks="${SLURM_NTASKS}" --ntasks-per-node=2 --gres=gpu:2 bash -lc '
+srun --kill-on-bad-exit=1 --ntasks="${SLURM_NTASKS}" --ntasks-per-node="${TASKS_PER_NODE}" --gres="gpu:${GPUS_PER_NODE}" bash -lc '
     set -euo pipefail
     echo "GPU preflight rank=${SLURM_PROCID} host=$(hostname) cuda=${CUDA_VISIBLE_DEVICES:-unset}"
     nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
-    "${PYTHON_BIN}" -c "import torch; assert torch.cuda.device_count() == 2, torch.cuda.device_count(); torch.empty(1, device=\"cuda:${SLURM_LOCALID}\"); print(torch.cuda.get_device_name(${SLURM_LOCALID}), flush=True)"
+    "${PYTHON_BIN}" -c "import torch; assert torch.cuda.device_count() == ${GPUS_PER_NODE}, torch.cuda.device_count(); torch.empty(1, device=\"cuda:${SLURM_LOCALID}\"); print(torch.cuda.get_device_name(${SLURM_LOCALID}), flush=True)"
 '
 
-srun --kill-on-bad-exit=1 --ntasks="${SLURM_NTASKS}" --ntasks-per-node=2 --gres=gpu:2 bash -lc '
+srun --kill-on-bad-exit=1 --ntasks="${SLURM_NTASKS}" --ntasks-per-node="${TASKS_PER_NODE}" --gres="gpu:${GPUS_PER_NODE}" bash -lc '
     set -euo pipefail
     echo "rank=${SLURM_PROCID} host=$(hostname) cuda=${CUDA_VISIBLE_DEVICES:-unset}"
     train_args=(

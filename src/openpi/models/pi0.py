@@ -365,23 +365,6 @@ class Pi0(_model.BaseModel):
                 lambda x: None if x is None else jnp.swapaxes(x, 0, 1), observation
             )
             actions_time = jnp.swapaxes(actions, 0, 1)
-<<<<<<< HEAD
-            keys = jax.random.split(rng, time_steps)
-
-            def step(carry, inputs):
-                frame, action, frame_rng, index = inputs
-                flow, aux, next_state = self._ttt_loss_frame(frame_rng, frame, action, carry, train=train)
-                if self.ttt_tbptt_step_size:
-                    boundary = (index + 1) % self.ttt_tbptt_step_size == 0
-                    next_state = jax.tree.map(
-                        lambda x: jax.lax.cond(boundary, jax.lax.stop_gradient, lambda y: y, x), next_state
-                    )
-                return next_state, (flow, aux) if aux is not None else (flow,)
-
-            _, values = jax.lax.scan(step, state, (obs_time, actions_time, keys, jnp.arange(time_steps)))
-            flow = jnp.swapaxes(values[0], 0, 1)
-            aux = jnp.swapaxes(values[1], 0, 1) if self.use_vjepa_aux else None
-=======
             # True TBPTT: build independent segments and stop gradients through
             # the fast-weight carry between segments. Merely applying
             # stop_gradient inside one long scan still lets reverse-mode AD
@@ -458,7 +441,6 @@ class Pi0(_model.BaseModel):
                 aux = jnp.swapaxes(aux_time, 0, 1)
             else:
                 aux = None
->>>>>>> 1152696 (little changes)
             return flow, aux
         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
         observation = _model.preprocess_observation(

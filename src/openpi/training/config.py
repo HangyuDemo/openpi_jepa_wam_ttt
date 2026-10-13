@@ -1236,13 +1236,9 @@ for _dataset_name, _base_name in (
         for _source in ("explicit_jepa", "implicit_full"):
             for _mode in ("ttt_only", "action_expert"):
                 _train_action = _mode == "action_expert"
-<<<<<<< HEAD
-                _trainable_pattern = r".*(ttt|state_proj).*"
-=======
                 # Strict TTT-only mode: every non-TTT parameter, including the
                 # state projection and action expert, remains frozen.
                 _trainable_pattern = r".*ttt.*"
->>>>>>> 1152696 (little changes)
                 if _train_action:
                     _trainable_pattern = (
                         r".*(ttt|action_in_proj|action_out_proj|time_mlp|state_proj|llm/.+_1).*"
@@ -1250,12 +1246,9 @@ for _dataset_name, _base_name in (
                 _CONFIGS.append(dataclasses.replace(
                     _base,
                     name=f"pi05_{_dataset_name}_ttt_{_architecture}_{_source}_{_mode}",
-<<<<<<< HEAD
-=======
                     project_name=(
                         "openpi0.5_jepa_libero" if _dataset_name == "libero" else _base.project_name
                     ),
->>>>>>> 1152696 (little changes)
                     model=dataclasses.replace(
                         _base.model,
                         ttt_enabled=True,

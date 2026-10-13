@@ -138,8 +138,6 @@ The image key remains provisional until the checkpoint's teacher views are
 confirmed. The eight `pi05_robotwin2_clean20_ttt_*` configurations inherit
 the 50-step horizon and 50-frame offset, but still require a trained and
 compatible Pi0.5 + JEPA checkpoint and confirmed action transforms.
-<<<<<<< HEAD
-=======
 
 ## Simulator evaluation
 
@@ -149,4 +147,3 @@ and known checkpoint limitations are documented in
 uses the trained checkpoint's own action and normalization transforms; verify
 those conventions against the data used to train the checkpoint before
 interpreting success rates.
->>>>>>> 1152696 (little changes)

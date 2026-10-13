@@ -1,0 +1,24 @@
+LIBERO dataset preflight OK: 1693 local parquet files
+job=898734 nodes=evc[35,47] coordinator=evc35:12734
+config=pi05_libero_ttt_wrapper_implicit_full_ttt_only exp=libero_ttt_wrapper_implicit_gbs16 gbs=16 fsdp=4 steps=40000
+checkpoint=/lustre/fs1/home/ha865618/project/openpi_jepawam/checkpoints/pi05_libero_ttt_wrapper_implicit_full_ttt_only/libero_ttt_wrapper_implicit_gbs16 resume_requested=1
+GPU preflight rank=0 host=evc35 cuda=0,1
+GPU preflight rank=1 host=evc35 cuda=0,1
+GPU preflight rank=2 host=evc47 cuda=0,1
+GPU preflight rank=3 host=evc47 cuda=0,1
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+0, NVIDIA H100 PCIe, 81559 MiB
+1, NVIDIA H100 PCIe, 81559 MiB
+NVIDIA H100 PCIe
+NVIDIA H100 PCIe
+NVIDIA H100 PCIe
+NVIDIA H100 PCIe
+rank=1 host=evc35 cuda=0,1
+rank=0 host=evc35 cuda=0,1
+rank=2 host=evc47 cuda=0,1
+rank=3 host=evc47 cuda=0,1
