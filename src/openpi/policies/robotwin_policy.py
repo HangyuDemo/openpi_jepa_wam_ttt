@@ -55,6 +55,16 @@ class RoboTwinInputs(transforms.DataTransformFn):
             result["vjepa_target"] = data["vjepa_target"]
         if "vjepa_current" in data:
             result["vjepa_current"] = data["vjepa_current"]
+        if "vjepa_online_image" in data:
+            # Preserve the original camera frame and dataset index until the
+            # collated TorchDataLoader runs the frozen online V-JEPA encoder.
+            raw = np.asarray(data["vjepa_online_image"])
+            if np.issubdtype(raw.dtype, np.floating):
+                raw = np.rint(raw * 255).clip(0, 255).astype(np.uint8)
+            if raw.ndim == 3 and raw.shape[0] == 3 and raw.shape[-1] != 3:
+                raw = np.moveaxis(raw, 0, -1)
+            result["vjepa_online_image"] = raw
+            result["vjepa_online_index"] = data["vjepa_online_index"]
         return result
 
 

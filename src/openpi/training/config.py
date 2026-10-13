@@ -441,6 +441,14 @@ class LeRobotRoboTwinDataConfig(DataConfigFactory):
     # Explicit TTT uses the same camera as the future-pair teacher target by
     # default; extra camera views are an explicit opt-in.
     vjepa_current_image_keys: tuple[str, ...] = ()
+    # Compute the current explicit-JEPA view on the training GPU instead of
+    # reading a precomputed ``data/vjepa_targets`` tree.  This is useful for
+    # storage-light TTT runs and deliberately does not enable the auxiliary
+    # future-target loss by itself.
+    vjepa_online_current: bool = False
+    vjepa_online_checkpoint: str | None = None
+    vjepa_online_source_root: str | None = None
+    vjepa_online_batch_size: int = 4
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -460,8 +468,18 @@ class LeRobotRoboTwinDataConfig(DataConfigFactory):
             self.vjepa_target_root is not None
             and getattr(model_config, "ttt_enabled", False)
             and model_config.ttt_memory_source == "explicit_jepa"
+            and not self.vjepa_online_current
         ):
             repack_mapping["vjepa_current"] = "vjepa_current"
+        if self.vjepa_online_current:
+            # Keep the raw, unresized camera frame until TorchDataLoader calls
+            # OnlineVJepaCurrent.  The ordinary model image still goes through
+            # RoboTwinInputs and the 224px model transform below.
+            image_key = self.vjepa_image_key or "observation.images.cam_high"
+            if self.vjepa_current_image_keys not in ((), (image_key,)):
+                raise ValueError("Online V-JEPA current currently supports one RoboTwin image view")
+            repack_mapping["vjepa_online_image"] = image_key
+            repack_mapping["vjepa_online_index"] = "index"
 
         data_transforms = _transforms.Group(
             inputs=[robotwin_policy.RoboTwinInputs(adapt_to_pi=self.adapt_to_pi)],
@@ -492,6 +510,10 @@ class LeRobotRoboTwinDataConfig(DataConfigFactory):
             vjepa_future_offset=self.vjepa_future_offset,
             vjepa_image_key=self.vjepa_image_key,
             vjepa_current_image_keys=current_image_keys,
+            vjepa_online_current=self.vjepa_online_current,
+            vjepa_online_checkpoint=self.vjepa_online_checkpoint,
+            vjepa_online_source_root=self.vjepa_online_source_root,
+            vjepa_online_batch_size=self.vjepa_online_batch_size,
         )
 
 
