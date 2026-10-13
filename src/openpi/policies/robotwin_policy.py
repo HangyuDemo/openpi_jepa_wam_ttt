@@ -31,7 +31,7 @@ class RoboTwinInputs(transforms.DataTransformFn):
         state = np.asarray(data["state"])
         if state.shape[-1] != 14:
             raise ValueError(f"RoboTwin state must have 14 dimensions, got {state.shape}")
-        state = aloha_policy._decode_state(state, adapt_to_pi=self.adapt_to_pi)
+        state = aloha_policy._decode_state(state, adapt_to_pi=self.adapt_to_pi)  # noqa: SLF001
 
         cameras = data["images"]
         images = {
@@ -48,7 +48,7 @@ class RoboTwinInputs(transforms.DataTransformFn):
             actions = np.asarray(data["actions"])
             if actions.shape[-1] != 14:
                 raise ValueError(f"RoboTwin actions must have 14 dimensions, got {actions.shape}")
-            result["actions"] = aloha_policy._encode_actions_inv(actions, adapt_to_pi=self.adapt_to_pi)
+            result["actions"] = aloha_policy._encode_actions_inv(actions, adapt_to_pi=self.adapt_to_pi)  # noqa: SLF001
         if "prompt" in data:
             result["prompt"] = data["prompt"]
         if "vjepa_target" in data:
@@ -76,4 +76,4 @@ class RoboTwinOutputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         actions = np.asarray(data["actions"])[..., :14]
-        return {"actions": aloha_policy._encode_actions(actions, adapt_to_pi=self.adapt_to_pi)}
+        return {"actions": aloha_policy._encode_actions(actions, adapt_to_pi=self.adapt_to_pi)}  # noqa: SLF001
