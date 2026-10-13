@@ -41,7 +41,7 @@ class RoboTwinInputs(transforms.DataTransformFn):
         }
         result = {
             "image": images,
-            "image_mask": {name: np.True_ for name in images},
+            "image_mask": dict.fromkeys(images, np.True_),
             "state": state,
         }
         if "actions" in data:

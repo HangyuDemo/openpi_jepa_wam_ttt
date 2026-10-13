@@ -149,6 +149,7 @@ def init_train_state(
     )
     trainable_paths = ["/".join(map(str, path)) for path in trainable_shapes]
     if config.name.endswith(("_ttt_only", "_ttt_only_online")):
+
         def is_ttt_parameter(path: str) -> bool:
             parts = tuple(path.split("/"))
             return "ttt" in parts or any(part.startswith("ttt_") for part in parts)
@@ -435,7 +436,9 @@ def main(config: _config.TrainConfig):
             if not np.isfinite(validation_loss):
                 raise ValueError(f"Non-finite validation flow loss at step {completed_step}: {validation_loss}")
             if jax.process_index() == 0:
-                logging.info("Validation flow loss at step %d: %.6f (best %.6f)", completed_step, validation_loss, best_loss)
+                logging.info(
+                    "Validation flow loss at step %d: %.6f (best %.6f)", completed_step, validation_loss, best_loss
+                )
                 if config.wandb_enabled:
                     wandb.log({"validation/flow_loss": validation_loss}, step=completed_step)
             if validation_loss < best_loss:

@@ -22,8 +22,8 @@ import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.policies.robotwin_policy as robotwin_policy
 import openpi.shared.download as _download
-import openpi.shared.normalize as _normalize
 import openpi.shared.nnx_utils as nnx_utils
+import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
 import openpi.training.misc.polaris_config as polaris_config
 import openpi.training.misc.roboarena_config as roboarena_config
@@ -294,9 +294,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
             )
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
-        current_image_keys = self.vjepa_current_image_keys or (
-            (self.vjepa_image_key,) if self.vjepa_image_key else ()
-        )
+        current_image_keys = self.vjepa_current_image_keys or ((self.vjepa_image_key,) if self.vjepa_image_key else ())
 
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
@@ -403,9 +401,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # Model transforms include things like tokenizing the prompt and action targets
         # You do not need to change anything here for your own dataset.
         model_transforms = ModelTransformFactory()(model_config)
-        current_image_keys = self.vjepa_current_image_keys or (
-            (self.vjepa_image_key,) if self.vjepa_image_key else ()
-        )
+        current_image_keys = self.vjepa_current_image_keys or ((self.vjepa_image_key,) if self.vjepa_image_key else ())
 
         # We return all data transforms for training and inference. No need to change anything here.
         return dataclasses.replace(
@@ -1266,20 +1262,21 @@ for _suffix, _pilot_name in (
 ):
     _pilot = next(c for c in _CONFIGS if c.name == _pilot_name)
     _pilot_data = _pilot.data
-    _CONFIGS.append(dataclasses.replace(
-        _pilot,
-        name=f"pi05_robotwin2_clean20{_suffix}",
-        data=dataclasses.replace(
-            _pilot_data,
-            repo_id="robotwin2_clean20_v21",
-            dataset_root="/lustre/fs1/home/ha865618/project/robotwin_lerobot/robotwin2_clean20_v21",
-            assets=_robotwin_clean20_released_assets,
-            vjepa_target_root=(
-                "./data/vjepa_targets/robotwin2_clean20_v21_vjepa2_1_vitg_384_offset50"
-                if _suffix else None
+    _CONFIGS.append(
+        dataclasses.replace(
+            _pilot,
+            name=f"pi05_robotwin2_clean20{_suffix}",
+            data=dataclasses.replace(
+                _pilot_data,
+                repo_id="robotwin2_clean20_v21",
+                dataset_root="/lustre/fs1/home/ha865618/project/robotwin_lerobot/robotwin2_clean20_v21",
+                assets=_robotwin_clean20_released_assets,
+                vjepa_target_root=(
+                    "./data/vjepa_targets/robotwin2_clean20_v21_vjepa2_1_vitg_384_offset50" if _suffix else None
+                ),
             ),
-        ),
-    ))
+        )
+    )
 
 # Four K/V/placement routes, with the TTT-only and action-expert-update modes
 # from the LeVJEPA_WAM_TTT experiments. The data-specific V-JEPA configs above
@@ -1298,37 +1295,35 @@ for _dataset_name, _base_name in (
                 # state projection and action expert, remains frozen.
                 _trainable_pattern = r".*ttt.*"
                 if _train_action:
-                    _trainable_pattern = (
-                        r".*(ttt|action_in_proj|action_out_proj|time_mlp|state_proj|llm/.+_1).*"
+                    _trainable_pattern = r".*(ttt|action_in_proj|action_out_proj|time_mlp|state_proj|llm/.+_1).*"
+                _CONFIGS.append(
+                    dataclasses.replace(
+                        _base,
+                        name=f"pi05_{_dataset_name}_ttt_{_architecture}_{_source}_{_mode}",
+                        project_name=("openpi0.5_jepa_libero" if _dataset_name == "libero" else _base.project_name),
+                        model=dataclasses.replace(
+                            _base.model,
+                            ttt_enabled=True,
+                            ttt_architecture=_architecture,
+                            ttt_memory_source=_source,
+                            ttt_context_length=128,
+                            ttt_observation_stride=8,
+                            ttt_tbptt_step_size=8,
+                            ttt_current_jepa_num_views=1,
+                            vjepa_aux_loss_enabled=_train_action,
+                        ),
+                        freeze_filter=nnx.Not(nnx_utils.PathRegex(_trainable_pattern)),
+                        weight_loader=weight_loaders.CheckpointWeightLoader(
+                            f"./checkpoints/{_base_name}/pretrained/params",
+                            missing_regex=r".*(vjepa|ttt|state_proj).*",
+                        ),
+                        batch_size=4 if _train_action else 1,
+                        num_train_steps=40_000,
+                        save_interval=1000,
+                        keep_period=None if not _train_action else _base.keep_period,
+                        ema_decay=None,
                     )
-                _CONFIGS.append(dataclasses.replace(
-                    _base,
-                    name=f"pi05_{_dataset_name}_ttt_{_architecture}_{_source}_{_mode}",
-                    project_name=(
-                        "openpi0.5_jepa_libero" if _dataset_name == "libero" else _base.project_name
-                    ),
-                    model=dataclasses.replace(
-                        _base.model,
-                        ttt_enabled=True,
-                        ttt_architecture=_architecture,
-                        ttt_memory_source=_source,
-                        ttt_context_length=128,
-                        ttt_observation_stride=8,
-                        ttt_tbptt_step_size=8,
-                        ttt_current_jepa_num_views=1,
-                        vjepa_aux_loss_enabled=_train_action,
-                    ),
-                    freeze_filter=nnx.Not(nnx_utils.PathRegex(_trainable_pattern)),
-                    weight_loader=weight_loaders.CheckpointWeightLoader(
-                        f"./checkpoints/{_base_name}/pretrained/params",
-                        missing_regex=r".*(vjepa|ttt|state_proj).*",
-                    ),
-                    batch_size=4 if _train_action else 1,
-                    num_train_steps=40_000,
-                    save_interval=1000,
-                    keep_period=None if not _train_action else _base.keep_period,
-                    ema_decay=None,
-                ))
+                )
 
 # Storage-light LIBERO TTT-only variants: the frozen JEPA target objective has
 # no gradient path to TTT weights. Explicit K/V is encoded from current images.
@@ -1336,23 +1331,25 @@ for _base in tuple(_CONFIGS):
     if not (_base.name.startswith("pi05_libero_ttt_") and _base.name.endswith("_ttt_only")):
         continue
     _online_current = _base.model.ttt_memory_source == "explicit_jepa"
-    _CONFIGS.append(dataclasses.replace(
-        _base,
-        name=f"{_base.name}_online",
-        model=dataclasses.replace(_base.model, vjepa_aux_loss_enabled=False),
-        validation_fraction=0.05,
-        validation_interval=400,
-        validation_num_batches=8,
-        save_interval=200,
-        keep_period=None,
-        data=dataclasses.replace(
-            _base.data,
-            vjepa_target_root=None,
-            vjepa_online_current=_online_current,
-            vjepa_online_checkpoint=("./data/weights/vjepa2/vjepa2_1_vitg_384.pt" if _online_current else None),
-            vjepa_online_source_root=("./third_party/vjepa2" if _online_current else None),
-        ),
-    ))
+    _CONFIGS.append(
+        dataclasses.replace(
+            _base,
+            name=f"{_base.name}_online",
+            model=dataclasses.replace(_base.model, vjepa_aux_loss_enabled=False),
+            validation_fraction=0.05,
+            validation_interval=400,
+            validation_num_batches=8,
+            save_interval=200,
+            keep_period=None,
+            data=dataclasses.replace(
+                _base.data,
+                vjepa_target_root=None,
+                vjepa_online_current=_online_current,
+                vjepa_online_checkpoint=("./data/weights/vjepa2/vjepa2_1_vitg_384.pt" if _online_current else None),
+                vjepa_online_source_root=("./third_party/vjepa2" if _online_current else None),
+            ),
+        )
+    )
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
     raise ValueError("Config names must be unique.")
