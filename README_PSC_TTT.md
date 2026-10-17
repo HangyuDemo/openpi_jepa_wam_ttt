@@ -26,6 +26,22 @@ sbatch -A YOUR_PSC_ALLOCATION --export=ALL scripts/run_libero_online_h100.sbatch
 
 The job requests one Bridges-2 `GPU-shared` node with four H100 80 GiB GPUs. Its walltime is 48 hours. Submit the same command again after a walltime stop; `--resume` loads the latest complete checkpoint. Keep the same `EXP_NAME`, `CONFIG_NAME`, and checkpoint directory across submissions. Set `WANDB_ENABLED=1` if the environment has a working W&B login.
 
+## Inline implicit and explicit runs
+
+These dedicated jobs use the `_ttt_only_online` configurations: only TTT parameters receive optimizer updates, and `vjepa_aux_loss_enabled=False` leaves action flow loss as the sole training objective. The explicit job encodes current-frame V-JEPA tokens online; the implicit job does not load the V-JEPA teacher. Both jobs require a W&B API key and force online logging. Keep the key out of the script and the Git repository.
+
+```bash
+export ROOT=/ocean/projects/cis260071p/ha865618/project/openpi_jepa_wam_ttt
+read -rsp 'W&B API key: ' WANDB_API_KEY; echo
+export WANDB_API_KEY
+cd "$ROOT"
+mkdir -p slurm_logs
+sbatch -A cis260071p --export=ALL scripts/run_libero_ttt_inline_implicit_psc.sbatch
+sbatch -A cis260071p --export=ALL scripts/run_libero_ttt_inline_explicit_psc.sbatch
+```
+
+Submit either command separately if only one route is needed. The scripts use `$ROOT/.venv/bin/python`, global batch size 4, four H100 GPUs, and distinct experiment names. You can override `PYTHON_BIN`, `BATCH_SIZE` (must be divisible by four), `NUM_STEPS`, and `EXP_NAME` when submitting. Re-submit the same script and experiment name to resume from its latest checkpoint. Check `slurm_logs/` for the Slurm output.
+
 ## Checkpoint and validation rules
 
 - At every **200 completed global steps**, save a full resume checkpoint under `latest/<step>`. Orbax keeps only the newest numbered step in `latest`.

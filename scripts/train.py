@@ -301,6 +301,19 @@ def validation_step(
 
 def main(config: _config.TrainConfig):
     init_logging()
+    # Slurm keeps a copy of each submitted script, so editing the .sbatch file
+    # cannot change the save interval of these already-queued jobs.
+    queued_save_100_jobs = {
+        "930092": "pi05_libero_ttt_inline_explicit_jepa_ttt_only",
+        "930140": "pi05_libero_ttt_wrapper_explicit_jepa_ttt_only",
+        "935952": "pi05_libero_ttt_wrapper_implicit_full_ttt_only",
+        "899790": "pi05_libero_ttt_inline_implicit_full_ttt_only",
+        "930174": "pi05_robotwin2_clean20_ttt_wrapper_explicit_jepa_ttt_only",
+    }
+    job_id = os.environ.get("SLURM_JOB_ID")
+    if config.name == queued_save_100_jobs.get(job_id) and config.save_interval == 500:
+        config = dataclasses.replace(config, save_interval=100)
+        logging.info("Slurm job %s: checkpoint save interval overridden from 500 to 100 steps", job_id)
     initialize_jax_distributed()
     logging.info(f"Running on: {platform.node()}")
 

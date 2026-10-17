@@ -26,6 +26,13 @@ NUM_STEPS="${NUM_STEPS:-40000}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 WANDB_ENABLED="${WANDB_ENABLED:-0}"
 
+if [[ "$WANDB_ENABLED" == 1 ]]; then
+  # Never put the key in a tracked script or print it to a Slurm log.
+  : "${WANDB_API_KEY:?Export WANDB_API_KEY before sbatch (or set it in the job environment)}"
+  export WANDB_API_KEY WANDB_MODE=online
+  unset WANDB_DISABLED
+fi
+
 case "$CONFIG_NAME" in
   pi05_libero_ttt_*_explicit_jepa_ttt_only_online) EXPLICIT=1 ;;
   pi05_libero_ttt_*_implicit_full_ttt_only_online) EXPLICIT=0 ;;

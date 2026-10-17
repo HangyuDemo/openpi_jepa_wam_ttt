@@ -1,37 +1,20 @@
 #!/usr/bin/env bash
-# PSC Bridges-2: resume the four-rank RoboTwin Clean-20 TTT-only run from
-# checkpoint 500 while encoding the current V-JEPA view online on each GPU.
-#
-# Submit from the PSC project root after creating slurm_logs/:
-#   mkdir -p slurm_logs
-#   export WANDB_API_KEY='...'
-#   sbatch -A <allocation-id> --export=ALL \
-#     scripts/run_robotwin_ttt_wrapper_explicit_online_resume_psc.sbatch
-#
-# The checkpoint/config name intentionally remains the same as the previous
-# precomputed-current run, so --resume finds:
-#   checkpoints/pi05_robotwin2_clean20_ttt_wrapper_explicit_jepa_ttt_only/
-#     robotwin_clean20_ttt_wrapper_explicit_gbs16/500
-#
-# Online V-JEPA removes the large precomputed target tree.  The frozen teacher
-# checkpoint and its source tree are still required on PSC.
-#SBATCH -J openpi-rw-online
-#SBATCH -p normal
-#SBATCH -N 2
+# PSC Bridges-2: inline implicit-full TTT, action flow loss only.
+# Submit from ROOT after creating slurm_logs; WANDB_API_KEY is required.
+#SBATCH -J lib-i-implicit
+#SBATCH -p GPU-shared
+#SBATCH -N 1
 #SBATCH -n 4
-#SBATCH --ntasks-per-node=2
-#SBATCH --constraint=h100
-#SBATCH --gres=gpu:2
-#SBATCH -c 16
-#SBATCH --mem=400G
-#SBATCH -t 5-00:00:00
-#SBATCH --requeue
-#SBATCH --exclude=evc22,evc24,evc25,evc26,evc28,evc34,evc38,evc40,evc42,evc44,evc45,evc46,evc48,evc50
+#SBATCH --ntasks-per-node=4
+#SBATCH --gpus=h100-80:4
+#SBATCH -c 8
+#SBATCH --mem=200G
+#SBATCH -t 48:00:00
 #SBATCH -o slurm_logs/%x-%j.out
 #SBATCH -e slurm_logs/%x-%j.err
 
 set -euo pipefail
-
+export WANDB_API_KEY='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'
 ROOT="${ROOT:-/ocean/projects/cis260071p/ha865618/project/openpi_jepa_wam_ttt}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT}/.venv/bin/python}"
 CONFIG_NAME="${CONFIG_NAME:-pi05_robotwin2_clean20_ttt_wrapper_explicit_jepa_ttt_only}"

@@ -119,7 +119,7 @@ srun --kill-on-bad-exit=1 --ntasks="${SLURM_NTASKS}" --ntasks-per-node=2 --gres=
         --fsdp-devices "${FSDP_DEVICES}"
         --num-workers "${NUM_WORKERS}"
         --num-train-steps "${NUM_STEPS}"
-        --save-interval 500
+        --save-interval 100
         --keep-period 5000
     )
     if [[ "${RESUME_ENABLED}" == "1" ]]; then
