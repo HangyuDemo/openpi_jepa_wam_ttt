@@ -109,6 +109,24 @@ def _episode_starts(dataset: Dataset) -> np.ndarray:
     return result
 
 
+def _selected_episode_frames(dataset: Dataset, indices_path: str) -> np.ndarray:
+    """Map original episode IDs to frame IDs without renumbering the dataset."""
+    source = dataset
+    while hasattr(source, "_dataset"):
+        source = source._dataset
+    bounds = source.episode_data_index
+    with open(indices_path) as f:
+        episodes = json.load(f)
+    if not isinstance(episodes, list) or not episodes or any(type(i) is not int for i in episodes):
+        raise ValueError("episode_indices_path must contain a nonempty JSON array of integers")
+    if len(set(episodes)) != len(episodes) or any(i < 0 or i >= len(bounds["from"]) for i in episodes):
+        raise ValueError("episode_indices_path has duplicate or out-of-range episode indices")
+    return np.concatenate([
+        np.arange(int(bounds["from"][i]), int(bounds["to"][i]), dtype=np.int64)
+        for i in episodes
+    ])
+
+
 def _split_episode_indices(
     dataset: Dataset, split: Literal["train", "validation"], fraction: float, seed: int,
     *, limit: int | None = None,
@@ -559,6 +577,10 @@ def create_torch_data_loader(
             model_config.ttt_context_length,
             model_config.ttt_observation_stride,
         )
+    if data_config.episode_indices_path is not None:
+        indices = _selected_episode_frames(dataset, data_config.episode_indices_path)
+        dataset = torch.utils.data.Subset(dataset, indices.tolist())
+        logging.info("Selected %d frames from %s", len(dataset), data_config.episode_indices_path)
     if validation_fraction:
         limit = None if split == "train" else batch_size * num_batches if num_batches is not None else None
         indices = _split_episode_indices(dataset, split, validation_fraction, validation_seed, limit=limit)

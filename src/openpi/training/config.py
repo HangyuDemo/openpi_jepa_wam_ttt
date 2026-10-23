@@ -69,6 +69,8 @@ class DataConfig:
     repo_id: str | None = None
     # Optional explicit local LeRobot dataset directory.
     dataset_root: str | None = None
+    # Optional JSON array of original LeRobot episode indices to sample.
+    episode_indices_path: str | None = None
     # Video decoder passed to LeRobot. RoboTwin AV1 videos use PyAV because
     # torchcodec may be importable even when its FFmpeg shared libraries are not.
     video_backend: str | None = None
@@ -427,6 +429,7 @@ class LeRobotRoboTwinDataConfig(DataConfigFactory):
     """RoboTwin 2.0 LeRobot v2.1: three cameras and 14D joint-space actions."""
 
     dataset_root: str | None = None
+    episode_indices_path: str | None = None
     video_backend: Literal["pyav", "torchcodec", "video_reader"] | None = "pyav"
     adapt_to_pi: bool = True
     use_delta_joint_actions: bool = True
@@ -496,6 +499,7 @@ class LeRobotRoboTwinDataConfig(DataConfigFactory):
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
             dataset_root=self.dataset_root,
+            episode_indices_path=self.episode_indices_path,
             video_backend=self.video_backend,
             repack_transforms=_transforms.Group(inputs=[_transforms.RepackTransform(repack_mapping)]),
             data_transforms=data_transforms,

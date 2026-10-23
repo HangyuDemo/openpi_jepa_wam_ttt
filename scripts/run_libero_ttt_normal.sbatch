@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Four-GPU LIBERO TTT training wrapper. Normal uses 2 nodes x 2 GPUs;
-# highgpu uses 1 node x 4 GPUs with sbatch resource overrides. Re-running
-# the same experiment resumes the latest completed checkpoint automatically.
+# LIBERO TTT training wrapper. Normal defaults to 2 nodes x 2 GPUs;
+# resource overrides can request more nodes and ranks with one rank per GPU.
+# Re-running the same experiment resumes the latest completed checkpoint.
 #SBATCH -J openpi-libero-ttt
 #SBATCH -p normal
 #SBATCH -N 2
@@ -37,8 +37,8 @@ WANDB_ENABLED="${WANDB_ENABLED:-1}"
 TASKS_PER_NODE="${TASKS_PER_NODE:-2}"
 GPUS_PER_NODE="${GPUS_PER_NODE:-2}"
 
-if (( SLURM_NTASKS != 4 || TASKS_PER_NODE * SLURM_JOB_NUM_NODES != 4 || GPUS_PER_NODE != TASKS_PER_NODE )); then
-    echo "Expected four ranks, one per GPU; check Slurm allocation and TASKS_PER_NODE/GPUS_PER_NODE" >&2
+if (( SLURM_NTASKS < 1 || TASKS_PER_NODE * SLURM_JOB_NUM_NODES != SLURM_NTASKS || GPUS_PER_NODE != TASKS_PER_NODE || BATCH_SIZE % SLURM_NTASKS != 0 || FSDP_DEVICES != SLURM_NTASKS )); then
+    echo "Expected one rank per GPU, a divisible global batch, and FSDP_DEVICES=SLURM_NTASKS; check Slurm allocation and exported settings" >&2
     exit 2
 fi
 
@@ -105,7 +105,7 @@ export RESUME_ENABLED=1
 COORDINATOR="$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)"
 export JAX_COORDINATOR_ADDRESS="${COORDINATOR}:$((12000 + SLURM_JOB_ID % 1000))"
 echo "job=${SLURM_JOB_ID} nodes=${SLURM_JOB_NODELIST} coordinator=${JAX_COORDINATOR_ADDRESS}"
-echo "config=${CONFIG_NAME} exp=${EXP_NAME} gbs=${BATCH_SIZE} fsdp=${FSDP_DEVICES} steps=${NUM_STEPS}"
+echo "config=${CONFIG_NAME} exp=${EXP_NAME} gbs=${BATCH_SIZE} batch/GPU=$((BATCH_SIZE / SLURM_NTASKS)) fsdp=${FSDP_DEVICES} steps=${NUM_STEPS}"
 echo "checkpoint=${CHECKPOINT_DIR} resume_requested=1"
 
 # Fail before JAX initialization if any assigned task cannot see a healthy GPU.

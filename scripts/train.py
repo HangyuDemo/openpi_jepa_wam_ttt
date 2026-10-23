@@ -318,10 +318,10 @@ def main(config: _config.TrainConfig):
     logging.info(f"Running on: {platform.node()}")
 
     if config.name.endswith("_ttt_only_online") and (
-        jax.process_count() != 4 or jax.device_count() != 4 or jax.local_device_count() != 1
+        jax.device_count() != jax.process_count() or jax.local_device_count() != 1
     ):
         raise RuntimeError(
-            "Online LIBERO TTT requires four JAX processes with one GPU each; "
+            "Online LIBERO TTT requires one GPU per JAX process; "
             f"got processes={jax.process_count()}, devices={jax.device_count()}, "
             f"local_devices={jax.local_device_count()}"
         )
