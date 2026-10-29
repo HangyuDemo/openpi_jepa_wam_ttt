@@ -7,6 +7,17 @@ artifacts/
 wandb/
 slurm_logs/
 
+# Legacy cluster launch scripts stay local; Piper robot training scripts remain shareable.
+/run_libero_ii_ie_tacc_stampede3.slurm
+/scripts/run_libero*.sbatch
+/scripts/run_robotwin*.sbatch
+/scripts/run_we*.sbatch
+/scripts/run_ttt*.sbatch
+/scripts/smoke_jax_two_gpu.sbatch
+/scripts/watch_robotwin_500_handoff.sbatch
+/scripts/switch_resume_on_finalized_checkpoint.sbatch
+/scripts/cancel_piper_after_1100.sbatch
+
 # External V-JEPA checkout; clone separately as documented in README_JEPAWAM.md.
 third_party/vjepa2/
 

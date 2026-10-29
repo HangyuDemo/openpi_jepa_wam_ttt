@@ -1,0 +1,9 @@
+{
+  "output_root": "data/vjepa_targets/piper_pick_can_place_plate_offset31",
+  "complete_episodes": 150,
+  "total_episodes": 150,
+  "complete_frames": 19246,
+  "total_frames": 19246,
+  "complete_gib": 58.146825313568115,
+  "expected_gib": 58.14678955078125
+}

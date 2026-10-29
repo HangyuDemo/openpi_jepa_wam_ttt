@@ -20,6 +20,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.piper_policy as piper_policy
 import openpi.policies.robotwin_policy as robotwin_policy
 import openpi.shared.download as _download
 import openpi.shared.nnx_utils as nnx_utils
@@ -586,6 +587,59 @@ class RLDSDroidDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotPiperDataConfig(DataConfigFactory):
+    """Converted Piper LeRobot v2.1 dataset: two cameras, 14D state, 7D actions."""
+
+    dataset_root: str = "./data/pick_can_place_plate_150_trimmed_v21"
+    vjepa_target_root: str | None = None
+    vjepa_future_offset: int = 31
+    vjepa_image_key: str = "observation.images.front"
+    use_delta_joint_actions: bool = True
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_mapping = {
+            "images": {
+                "front": "observation.images.front",
+                "wrist": "observation.images.wrist",
+            },
+            "state": "observation.state",
+            "actions": "action",
+            "prompt": "prompt",
+        }
+        if self.vjepa_target_root is not None and getattr(model_config, "vjepa_aux_loss_enabled", True):
+            repack_mapping["vjepa_target"] = "vjepa_target"
+        if getattr(model_config, "ttt_enabled", False) and model_config.ttt_memory_source == "explicit_jepa":
+            repack_mapping["vjepa_current"] = "vjepa_current"
+
+        data_transforms = _transforms.Group(
+            inputs=[piper_policy.PiperInputs()],
+            outputs=[piper_policy.PiperOutputs()],
+        )
+        if self.use_delta_joint_actions:
+            # Joint targets become relative to the current joint state; gripper stays absolute.
+            delta_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_mask)],
+            )
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            dataset_root=self.dataset_root,
+            video_backend="pyav",
+            repack_transforms=_transforms.Group(inputs=[_transforms.RepackTransform(repack_mapping)]),
+            data_transforms=data_transforms,
+            model_transforms=ModelTransformFactory()(model_config),
+            action_sequence_keys=("action",),
+            vjepa_target_root=self.vjepa_target_root,
+            vjepa_future_offset=self.vjepa_future_offset,
+            vjepa_image_key=self.vjepa_image_key,
+            vjepa_current_image_keys=(self.vjepa_image_key,),
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class LeRobotDROIDDataConfig(DataConfigFactory):
     """
     Example data config for custom DROID dataset in LeRobot format.
@@ -666,6 +720,8 @@ class TrainConfig:
     seed: int = 42
     # Global batch size.
     batch_size: int = 32
+    # Accumulate this many streamed microbatches per optimizer update (JAX trainer).
+    gradient_accumulation_steps: int = 1
     # Number of workers to use for the data loader. Increasing this number will speed up data loading but
     # will increase memory and CPU usage.
     num_workers: int = 2
@@ -719,6 +775,8 @@ class TrainConfig:
         return nnx.All(nnx.Param, nnx.Not(self.freeze_filter))
 
     def __post_init__(self) -> None:
+        if self.gradient_accumulation_steps < 1 or self.batch_size % self.gradient_accumulation_steps:
+            raise ValueError("batch_size must be divisible by positive gradient_accumulation_steps")
         if self.resume and self.overwrite:
             raise ValueError("Cannot resume and overwrite at the same time.")
         if not 0 <= self.validation_fraction < 1:
@@ -1295,6 +1353,12 @@ for _dataset_name, _base_name in (
         for _source in ("explicit_jepa", "implicit_full"):
             for _mode in ("ttt_only", "action_expert"):
                 _train_action = _mode == "action_expert"
+                _matched_we_route = (
+                    _dataset_name in ("libero", "robotwin2_clean20")
+                    and _architecture == "wrapper"
+                    and _source == "explicit_jepa"
+                    and _mode == "ttt_only"
+                )
                 # Strict TTT-only mode: every non-TTT parameter, including the
                 # state projection and action expert, remains frozen.
                 _trainable_pattern = r".*ttt.*"
@@ -1310,7 +1374,9 @@ for _dataset_name, _base_name in (
                             ttt_enabled=True,
                             ttt_architecture=_architecture,
                             ttt_memory_source=_source,
-                            ttt_context_length=128,
+                            # LeVJEPA-WAM's 128 physical frames at stride 8
+                            # correspond to 16 observation/memory updates.
+                            ttt_context_length=16 if _matched_we_route else 128,
                             ttt_observation_stride=8,
                             ttt_tbptt_step_size=8,
                             ttt_current_jepa_num_views=1,
@@ -1354,6 +1420,129 @@ for _base in tuple(_CONFIGS):
             ),
         )
     )
+
+# Piper pick-can-place-plate: compute normalization with pi05_piper, then train
+# the JEPA auxiliary stage before initializing TTT from that trained checkpoint.
+_piper_base = TrainConfig(
+    name="pi05_piper",
+    model=pi0_config.Pi0Config(pi05=True, action_horizon=16, discrete_state_input=True),
+    data=LeRobotPiperDataConfig(
+        repo_id="piper_pick_can_place_plate_150_v21",
+        base_config=DataConfig(prompt_from_task=True),
+    ),
+    batch_size=16,
+    lr_schedule=_optimizer.CosineDecaySchedule(
+        warmup_steps=200,
+        peak_lr=5e-5,
+        decay_steps=3000,
+        decay_lr=5e-5,
+    ),
+    optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+    ema_decay=0.999,
+    weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+    num_train_steps=3000,
+    num_workers=2,
+    validation_fraction=0.05,
+    validation_interval=200,
+    validation_num_batches=4,
+    save_interval=500,
+    keep_period=None,
+)
+_CONFIGS.append(_piper_base)
+
+_piper_jepa = dataclasses.replace(
+    _piper_base,
+    name="pi05_piper_vjepa_aux",
+    model=dataclasses.replace(
+        _piper_base.model,
+        use_vjepa_aux=True,
+        vjepa_aux_weight=0.1,
+        vjepa_aux_warmup_steps=500,
+        vjepa_action_attends_queries=False,
+        vjepa_disable_geometric_augmentation=True,
+    ),
+    data=dataclasses.replace(
+        _piper_base.data,
+        assets=AssetsConfig(assets_dir="./assets/pi05_piper"),
+        vjepa_target_root="./data/vjepa_targets/piper_pick_can_place_plate_offset31",
+    ),
+    weight_loader=weight_loaders.CheckpointWeightLoader(
+        "gs://openpi-assets/checkpoints/pi05_base/params",
+        missing_regex=r".*vjepa_.*",
+    ),
+)
+_CONFIGS.append(_piper_jepa)
+
+# Joint real-robot training directly from official pi05_base. Both the future
+# JEPA objective and the current-feature TTT path are active throughout training.
+_CONFIGS.append(
+    dataclasses.replace(
+        _piper_jepa,
+        name="pi05_piper_jepa_ttt_joint",
+        project_name="openpi-piper-real-robot-jepa-ttt",
+        model=dataclasses.replace(
+            _piper_jepa.model,
+            ttt_enabled=True,
+            ttt_architecture="wrapper",
+            ttt_memory_source="explicit_jepa",
+            ttt_layer_indices=(3, 7, 11, 15),
+            ttt_context_length=16,
+            ttt_observation_stride=8,
+            ttt_tbptt_step_size=8,
+            vjepa_aux_loss_enabled=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "gs://openpi-assets/checkpoints/pi05_base/params",
+            missing_regex=r".*(vjepa_|ttt|state_proj).*",
+        ),
+        batch_size=64,
+        gradient_accumulation_steps=4,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=200,
+            peak_lr=5e-5,
+            decay_steps=10000,
+            decay_lr=1e-6,
+        ),
+        num_train_steps=10000,
+        num_workers=1,
+        # Validate and export the same parameters, without a second EMA copy.
+        ema_decay=None,
+        log_interval=1,
+        save_interval=100,
+        validation_interval=100,
+        # Four global microbatches of sixteen = 64 fixed held-out temporal windows.
+        validation_num_batches=4,
+        keep_period=None,
+        wandb_enabled=True,
+    )
+)
+
+_CONFIGS.append(
+    dataclasses.replace(
+        _piper_jepa,
+        name="pi05_piper_ttt_wrapper_explicit_jepa_ttt_only",
+        model=dataclasses.replace(
+            _piper_jepa.model,
+            ttt_enabled=True,
+            ttt_architecture="wrapper",
+            ttt_memory_source="explicit_jepa",
+            ttt_context_length=16,
+            ttt_observation_stride=8,
+            ttt_tbptt_step_size=8,
+            vjepa_aux_loss_enabled=False,
+        ),
+        freeze_filter=nnx.Not(nnx_utils.PathRegex(r".*ttt.*")),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "./checkpoints/pi05_piper_vjepa_aux/pretrained/params",
+            missing_regex=r".*(ttt|state_proj).*",
+        ),
+        batch_size=1,
+        ema_decay=None,
+        num_train_steps=3000,
+        save_interval=500,
+        keep_period=None,
+    )
+)
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
     raise ValueError("Config names must be unique.")

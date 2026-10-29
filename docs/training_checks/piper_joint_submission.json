@@ -1,0 +1,32 @@
+{
+  "job_id": 1058487,
+  "partition": "normal",
+  "time_limit": "3-00:00:00",
+  "gpus": 4,
+  "gpu_constraint": "h100",
+  "config": "pi05_piper_jepa_ttt_joint",
+  "exp_name": "piper_real_joint_gbs64_20261025",
+  "project_url": "https://wandb.ai/hang-yu-team/openpi-piper-real-robot-jepa-ttt",
+  "global_batch_size": 64,
+  "global_microbatch_size": 16,
+  "per_gpu_microbatch_size": 4,
+  "gradient_accumulation_steps": 4,
+  "save_interval": 100,
+  "validation_interval": 100,
+  "validation_num_batches": 4,
+  "max_optimizer_steps": 10000,
+  "file_sha256": {
+    "scripts/run_piper_joint_train.sbatch": "eac7f9047d32f66d73e083ba7515f3112b6fd697897d7594ca96ae94f9385315",
+    "scripts/train.py": "b2edcb18a0f54983feb7e7c21f7393c45607f8e42129eb9f92df8e9b5b145da1",
+    "src/openpi/training/config.py": "a0d748349d5b5e1933fd6049af0f639f03ab986645a86ad347313bcc3fec88a9",
+    "src/openpi/models/pi0.py": "44dcc5c592f3b6b44a5e08f2f493fb62f448666f9d56cd540b5ba9e4f8c288dc"
+  },
+  "status": "running at last Slurm check",
+  "replaced_job_id": 1058476,
+  "replaced_job_status": "failed at the obsolete 16-step accumulation guard before training began",
+  "cache_isolation": "per job and rank on node-local temporary storage",
+  "nodes": 2,
+  "cpus_total": 8,
+  "memory_gb_per_node": 128,
+  "validation_windows": 64
+}

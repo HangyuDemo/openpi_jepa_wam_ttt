@@ -526,6 +526,7 @@ class Pi0(_model.BaseModel):
         noise: at.Float[at.Array, "b ah ad"] | None = None,
         ttt_state: ttt_memory.FastWeights | None = None,
         return_ttt_state: bool = False,
+        ttt_update: bool = True,
     ) -> _model.Actions:
         if self.ttt_enabled:
             observation = _model.preprocess_observation(None, observation, train=False)
@@ -553,7 +554,7 @@ class Pi0(_model.BaseModel):
                 )
                 velocity, state = self._ttt_suffix(
                     observation, x_t, time, prefix_mask, cache, current_jepa, state,
-                    update=True, update_mask=update_mask,
+                    update=ttt_update, update_mask=update_mask,
                 )
                 return x_t - velocity / num_steps, state
 

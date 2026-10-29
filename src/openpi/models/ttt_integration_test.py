@@ -105,6 +105,14 @@ class TTTIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(fast.step.shape, (1, 1))
         np.testing.assert_array_equal(np.asarray(fast.step[:, 0]), [1])
+        # Disabling online adaptation must preserve every fast weight and the
+        # observation counter, including when a nonempty memory is supplied.
+        _, frozen = model.sample_actions(
+            jax.random.key(4), observation, num_steps=2, ttt_state=fast,
+            return_ttt_state=True, ttt_update=False,
+        )
+        for before, after in zip(jax.tree.leaves(fast), jax.tree.leaves(frozen), strict=True):
+            np.testing.assert_array_equal(before, after)
 
     def test_temporal_context_with_partial_final_tbptt_segment(self):
         config = self._config("implicit_full", context=3, tbptt=2)

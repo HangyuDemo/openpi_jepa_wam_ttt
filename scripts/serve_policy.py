@@ -48,6 +48,8 @@ class Args:
 
     # Port to serve the policy on.
     port: int = 8000
+    # Flow-matching Euler steps at inference; 10 preserves the existing default.
+    num_steps: int = 10
     # Record the policy's behavior for debugging.
     record: bool = False
 
@@ -76,29 +78,38 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
 }
 
 
-def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
+def create_default_policy(env: EnvMode, *, default_prompt: str | None = None, num_steps: int = 10) -> _policy.Policy:
     """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
         return _policy_config.create_trained_policy(
-            _config.get_config(checkpoint.config), checkpoint.dir, default_prompt=default_prompt
+            _config.get_config(checkpoint.config),
+            checkpoint.dir,
+            default_prompt=default_prompt,
+            sample_kwargs={"num_steps": num_steps},
         )
     raise ValueError(f"Unsupported environment mode: {env}")
 
 
 def create_policy(args: Args) -> _policy.Policy:
     """Create a policy from the given arguments."""
+    if args.num_steps < 1:
+        raise ValueError(f"num_steps must be positive, got {args.num_steps}")
     match args.policy:
         case Checkpoint():
             return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+                _config.get_config(args.policy.config),
+                args.policy.dir,
+                default_prompt=args.default_prompt,
+                sample_kwargs={"num_steps": args.num_steps},
             )
         case Default():
-            return create_default_policy(args.env, default_prompt=args.default_prompt)
+            return create_default_policy(args.env, default_prompt=args.default_prompt, num_steps=args.num_steps)
 
 
 def main(args: Args) -> None:
     policy = create_policy(args)
-    policy_metadata = policy.metadata
+    policy_metadata = {**policy.metadata, "num_inference_steps": args.num_steps}
+    logging.info("Flow-matching inference steps: %d", args.num_steps)
 
     # Record the policy's behavior.
     if args.record:
