@@ -545,20 +545,39 @@ class Pi0(_model.BaseModel):
                 current_jepa = observation.vjepa_current.astype(jnp.float32)
                 current_jepa /= jnp.maximum(jnp.linalg.norm(current_jepa, axis=-1, keepdims=True), 1e-6)
 
+            observation_step = ttt_state.step
+
             def step(index, carry):
-                x_t, state = carry
+                x_t, state, committed_step = carry
                 time = jnp.full((batch_size,), 1.0 - index / num_steps)
                 update_mask = (
                     jnp.full((batch_size,), index == 0, dtype=jnp.bool_)
-                    if self.ttt_update_first_denoise_only else None
+                    if self.ttt_update_first_denoise_only
+                    else None
                 )
                 velocity, state = self._ttt_suffix(
-                    observation, x_t, time, prefix_mask, cache, current_jepa, state,
-                    update=ttt_update, update_mask=update_mask,
+                    observation,
+                    x_t,
+                    time,
+                    prefix_mask,
+                    cache,
+                    current_jepa,
+                    state,
+                    update=ttt_update,
+                    update_mask=update_mask,
                 )
-                return x_t - velocity / num_steps, state
+                if self.ttt_update_first_denoise_only:
+                    # Keep the newly written weights, but query the same physical
+                    # observation at its starting RoPE position on every denoise step.
+                    committed_step = jnp.where(index == 0, state.step, committed_step)
+                    state = state._replace(step=observation_step)
+                return x_t - velocity / num_steps, state, committed_step
 
-            actions, next_state = jax.lax.fori_loop(0, num_steps, step, (noise, ttt_state))
+            actions, next_state, committed_step = jax.lax.fori_loop(
+                0, num_steps, step, (noise, ttt_state, observation_step)
+            )
+            if self.ttt_update_first_denoise_only:
+                next_state = next_state._replace(step=committed_step)
             return (actions, next_state) if return_ttt_state else actions
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
